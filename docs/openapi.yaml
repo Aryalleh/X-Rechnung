@@ -1,0 +1,83 @@
+openapi: 3.0.3
+info:
+  title: X-Rechnung API
+  version: 0.1.0
+  description: >
+    Invoice API for German Freiberufler / Kleinunternehmer (§19 UStG).
+    All /api/* endpoints except /api/setup/* and /api/system/bootstrap require a
+    valid Cloudflare Access JWT. Mutating requests require the CSRF header
+    `X-Requested-With: XMLHttpRequest`. Responses use the envelope
+    `{ ok: boolean, data?, error? }`.
+servers:
+  - url: /api
+tags:
+  - name: setup
+  - name: system
+  - name: customers
+  - name: invoices
+  - name: payments
+  - name: received
+  - name: settings
+  - name: export
+paths:
+  /system/bootstrap:
+    get:
+      tags: [system]
+      summary: Public bootstrap info (setup state, app name, locale)
+      responses: { '200': { description: OK } }
+  /setup/verify-token:
+    post:
+      tags: [setup]
+      summary: Verify the one-time setup token
+      responses: { '200': { description: verified }, '401': { description: invalid } }
+  /setup/owner:
+    post: { tags: [setup], summary: Create the OWNER + localization, responses: { '200': { description: OK } } }
+  /setup/cloudflare:
+    post: { tags: [setup], summary: Connect Cloudflare, create Access app/policy + custom domain, responses: { '200': { description: OK } } }
+  /setup/complete:
+    post: { tags: [setup], summary: Finalize setup (invalidate token), responses: { '200': { description: OK } } }
+  /customers:
+    get: { tags: [customers], summary: List/search customers, responses: { '200': { description: OK } } }
+    post: { tags: [customers], summary: Create a customer, responses: { '201': { description: created }, '409': { description: code taken } } }
+  /customers/by-code/{code}:
+    get:
+      tags: [customers]
+      summary: Fast lookup by exact customer code (quick-invoice flow)
+      parameters: [{ name: code, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK }, '404': { description: not found } }
+  /invoices:
+    get: { tags: [invoices], summary: List invoices, responses: { '200': { description: OK } } }
+    post: { tags: [invoices], summary: Create a draft, responses: { '201': { description: created } } }
+  /invoices/{id}:
+    get: { tags: [invoices], summary: Invoice detail (items, payments, relations), responses: { '200': { description: OK } } }
+    put: { tags: [invoices], summary: Update a draft, responses: { '200': { description: OK }, '409': { description: locked } } }
+    delete: { tags: [invoices], summary: Delete a draft, responses: { '200': { description: OK } } }
+  /invoices/{id}/preview:
+    get: { tags: [invoices], summary: Live HTML preview (ENTWURF watermark for drafts), responses: { '200': { description: OK } } }
+  /invoices/{id}/issue:
+    post:
+      tags: [invoices]
+      summary: Idempotent final issue (assigns number, PDF, archive)
+      parameters: [{ name: Idempotency-Key, in: header, schema: { type: string } }]
+      responses: { '200': { description: OK }, '502': { description: PDF failed (number voided) } }
+  /invoices/{id}/storno:
+    post: { tags: [invoices], summary: Create a Stornorechnung, responses: { '201': { description: created } } }
+  /invoices/{id}/send:
+    post: { tags: [invoices], summary: Email the invoice with PDF, responses: { '200': { description: OK } } }
+  /payments/{invoiceId}:
+    get: { tags: [payments], summary: Payment summary, responses: { '200': { description: OK } } }
+    post: { tags: [payments], summary: Record a payment, responses: { '201': { description: created } } }
+  /received:
+    get: { tags: [received], summary: List received e-invoices (Inbox), responses: { '200': { description: OK } } }
+  /received/upload:
+    post: { tags: [received], summary: Upload .xml/.pdf (signature-checked), responses: { '201': { description: OK } } }
+  /export/year/{year}.zip:
+    get: { tags: [export], summary: Yearly ZIP bundle with manifest, responses: { '200': { description: application/zip } } }
+components:
+  securitySchemes:
+    cloudflareAccess:
+      type: apiKey
+      in: header
+      name: Cf-Access-Jwt-Assertion
+security:
+  - cloudflareAccess: []

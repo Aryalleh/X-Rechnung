@@ -1,0 +1,25 @@
+# =============================================================================
+# X-Rechnung — local development secrets (.dev.vars)
+#
+# Copy to `.dev.vars` for local `wrangler dev`. In production use:
+#   wrangler secret put DATA_ENCRYPTION_KEY
+#
+# Per the specification amendment, NO business configuration lives here.
+# Owner email, domains, tax numbers, invoice texts, KoSIT URL/API key,
+# Cloudflare API token, etc. are all configured from the admin panel and
+# stored in D1 (encrypted where sensitive). Only the values below are
+# deployment-level bootstrap values.
+# =============================================================================
+
+# Optional. 32-byte base64 key used to encrypt sensitive settings at rest in
+# D1 (secret_store: KoSIT API key, optional stored Cloudflare API token).
+# Generate:  openssl rand -base64 32
+#
+# If omitted, the app still boots and the full invoice workflow works, but
+# encrypted-at-rest secret storage is DISABLED and System Status reports the
+# secret store as NOT_CONFIGURED. Nothing else is hardcoded — the first-run
+# setup token is generated at runtime and printed to the Worker log.
+DATA_ENCRYPTION_KEY=
+
+# Deployment environment marker only (not business config).
+ENVIRONMENT=development
