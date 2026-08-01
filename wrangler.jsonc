@@ -37,7 +37,7 @@
     {
       "binding": "DB",
       "database_name": "x-rechnung",
-      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+      "database_id": "973560a3-e3d7-4cd2-9799-05c6e598d827",
       "migrations_dir": "migrations"
     }
   ],
