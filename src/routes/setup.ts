@@ -49,6 +49,18 @@ setupRoutes.post('/owner', async (c) => {
   await setSetting(c.env.DB, 'LOCALIZATION', 'locale', body.locale, { updatedBy: body.owner_email });
   await setSetting(c.env.DB, 'LOCALIZATION', 'timezone', body.timezone, { updatedBy: body.owner_email });
   await setSetting(c.env.DB, 'GENERAL', 'owner_email', body.owner_email, { updatedBy: body.owner_email });
+
+  // Installation profile → default currency + invoice language.
+  await setSetting(c.env.DB, 'LOCALIZATION', 'invoice_mode', body.invoice_mode, { updatedBy: body.owner_email });
+  if (body.invoice_mode === 'fa') {
+    await setSetting(c.env.DB, 'LOCALIZATION', 'invoice_language', 'fa', { updatedBy: body.owner_email });
+    await setSetting(c.env.DB, 'LOCALIZATION', 'currency', 'IRT', { updatedBy: body.owner_email });
+    await setSetting(c.env.DB, 'LOCALIZATION', 'country', 'IR', { updatedBy: body.owner_email });
+  } else if (body.invoice_mode === 'de') {
+    await setSetting(c.env.DB, 'LOCALIZATION', 'invoice_language', 'de', { updatedBy: body.owner_email });
+    await setSetting(c.env.DB, 'LOCALIZATION', 'currency', 'EUR', { updatedBy: body.owner_email });
+    await setSetting(c.env.DB, 'LOCALIZATION', 'country', 'DE', { updatedBy: body.owner_email });
+  }
   await audit(c.env.DB, { entityType: 'admin_user', entityId: owner.id, eventType: 'OWNER_CREATED', actorEmail: body.owner_email });
   return ok(c, { ownerId: owner.id, email: owner.email });
 });

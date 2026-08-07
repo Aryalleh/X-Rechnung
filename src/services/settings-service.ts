@@ -25,21 +25,29 @@ export interface GeneralSettings {
   currency: string;
   country: string;
   theme: 'light' | 'dark' | 'auto';
+  /** Installation profile: 'fa' (Iran only), 'de' (Germany only), 'both'. */
+  invoice_mode: 'fa' | 'de' | 'both';
 }
 
 export async function getGeneralSettings(db: D1Database): Promise<GeneralSettings> {
   const g = await getGroup(db, 'GENERAL');
   const l = await getGroup(db, 'LOCALIZATION');
+  const mode = (l.invoice_mode as GeneralSettings['invoice_mode']) ?? 'both';
+  // Sensible language/currency defaults follow the chosen profile unless
+  // explicitly overridden in settings.
+  const defaultLang = mode === 'fa' ? 'fa' : mode === 'de' ? 'de' : DEFAULTS.invoiceLanguage;
+  const defaultCur = mode === 'fa' ? 'IRT' : DEFAULTS.currency;
   return {
     app_name: (g.app_name as string) ?? 'X-Rechnung',
     base_url: (g.base_url as string) ?? null,
     locale: (l.locale as string) ?? DEFAULTS.locale,
-    invoice_language: (l.invoice_language as string) ?? DEFAULTS.invoiceLanguage,
+    invoice_language: (l.invoice_language as string) ?? defaultLang,
     timezone: (l.timezone as string) ?? DEFAULTS.timezone,
     date_format: (l.date_format as string) ?? DEFAULTS.dateFormat,
-    currency: (l.currency as string) ?? DEFAULTS.currency,
+    currency: (l.currency as string) ?? defaultCur,
     country: (l.country as string) ?? DEFAULTS.country,
     theme: (g.theme as GeneralSettings['theme']) ?? 'auto',
+    invoice_mode: mode,
   };
 }
 

@@ -22,6 +22,8 @@ systemRoutes.get('/bootstrap', async (c) => {
     locale: general.locale,
     timezone: general.timezone,
     invoiceLanguage: general.invoice_language,
+    invoiceMode: general.invoice_mode,
+    defaultCurrency: general.currency,
     theme: general.theme,
     hasOwner: Boolean(setup?.state === 'ACTIVE'),
   });

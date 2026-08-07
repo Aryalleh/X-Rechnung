@@ -19,11 +19,33 @@ export function NewInvoice() {
   const [invoiceDate, setInvoiceDate] = useState('');
   const [currency, setCurrency] = useState('EUR');
   const [language, setLanguage] = useState<'de' | 'fa'>('de');
+  const [mode, setMode] = useState<'fa' | 'de' | 'both'>('both');
   const [err, setErr] = useState<string | null>(null);
   const [invoiceId, setInvoiceId] = useState<string | null>(null);
   const servicesRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => { api.get<Template[]>('/templates?active=1').then(setTemplates).catch(() => {}); }, []);
+  useEffect(() => {
+    api.get<Template[]>('/templates?active=1').then(setTemplates).catch(() => {});
+    // Apply the installed profile's defaults + allowed options.
+    api.get<{ invoice_mode: 'fa' | 'de' | 'both'; currency: string; invoice_language: string }>('/settings/general')
+      .then((g) => {
+        setMode(g.invoice_mode);
+        setCurrency(g.currency || (g.invoice_mode === 'fa' ? 'IRT' : 'EUR'));
+        setLanguage((g.invoice_language as 'de' | 'fa') || (g.invoice_mode === 'fa' ? 'fa' : 'de'));
+      })
+      .catch(() => {});
+  }, []);
+
+  const currencyOptions: [string, string][] = mode === 'de'
+    ? [['EUR', 'یورو (EUR)']]
+    : mode === 'fa'
+      ? [['IRR', 'ریال (IRR)'], ['IRT', 'تومان (IRT)'], ['IRT_NEW', 'تومان جدید / قران']]
+      : [['EUR', 'یورو (EUR)'], ['IRR', 'ریال (IRR)'], ['IRT', 'تومان (IRT)'], ['IRT_NEW', 'تومان جدید / قران']];
+  const languageOptions: [string, string][] = mode === 'de'
+    ? [['de', 'آلمانی (Deutsch)']]
+    : mode === 'fa'
+      ? [['fa', 'فارسی']]
+      : [['de', 'آلمانی (Deutsch)'], ['fa', 'فارسی']];
 
   async function lookup() {
     setErr(null);
@@ -98,16 +120,12 @@ export function NewInvoice() {
             <div><label className="label">تاریخ صدور (اختیاری)</label><input className="input" type="date" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} /></div>
             <div><label className="label">ارز</label>
               <select className="input" value={currency} onChange={(e) => setCurrency(e.target.value)}>
-                <option value="EUR">یورو (EUR)</option>
-                <option value="IRR">ریال (IRR)</option>
-                <option value="IRT">تومان (IRT)</option>
-                <option value="IRT_NEW">تومان جدید / قران (پس از حذف صفر)</option>
+                {currencyOptions.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
               </select>
             </div>
             <div><label className="label">زبان فاکتور</label>
               <select className="input" value={language} onChange={(e) => setLanguage(e.target.value as 'de' | 'fa')}>
-                <option value="de">آلمانی (Deutsch)</option>
-                <option value="fa">فارسی</option>
+                {languageOptions.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
               </select>
             </div>
           </div>

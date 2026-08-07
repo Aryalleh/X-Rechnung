@@ -127,6 +127,8 @@ export const setupStep1Schema = z.object({
   recovery_email: z.string().email().optional().or(z.literal('')),
   locale: z.string().default('fa'),
   timezone: z.string().default('Europe/Berlin'),
+  /** Installation profile: Persian-only, German-only, or comprehensive. */
+  invoice_mode: z.enum(['fa', 'de', 'both']).default('both'),
 });
 
 export const emailChannelSchema = z.object({

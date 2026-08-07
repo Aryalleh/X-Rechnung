@@ -1,5 +1,7 @@
 # X-Rechnung
 
+📖 **[نسخهٔ فارسی این راهنما: README.fa.md](./README.fa.md)**
+
 Rechnungssystem für **Freiberufler / Kleinunternehmer (§ 19 UStG)** — vollständig
 auf **Cloudflare Workers**. Admin-Panel auf **Persisch (RTL)**, Rechnungen auf
 **Deutsch**. Erstellen, Versenden, Empfangen (E-Rechnung) und revisionssicheres

@@ -7,7 +7,7 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
   const [step, setStep] = useState(1);
   const [token, setToken] = useState('');
   const [err, setErr] = useState<string | null>(null);
-  const [owner, setOwner] = useState({ owner_name: '', owner_email: '', recovery_email: '', locale: 'fa', timezone: 'Europe/Berlin' });
+  const [owner, setOwner] = useState({ owner_name: '', owner_email: '', recovery_email: '', locale: 'fa', timezone: 'Europe/Berlin', invoice_mode: 'both' });
   const [cf, setCf] = useState({ account_id: '', zone_id: '', zone_name: '', worker_script_name: 'x-rechnung', api_token: '', app_domain: '' });
 
   async function verify() {
@@ -55,6 +55,17 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
             <div><label className="label">نام مالک</label><input className="input" value={owner.owner_name} onChange={(e) => setOwner({ ...owner, owner_name: e.target.value })} /></div>
             <div><label className="label">ایمیل مالک (Owner Email)</label><input className="input" dir="ltr" value={owner.owner_email} onChange={(e) => setOwner({ ...owner, owner_email: e.target.value })} /></div>
             <div><label className="label">ایمیل بازیابی (اختیاری)</label><input className="input" dir="ltr" value={owner.recovery_email} onChange={(e) => setOwner({ ...owner, recovery_email: e.target.value })} /></div>
+            <div>
+              <label className="label">حالت نصب (Installationsprofil)</label>
+              <select className="input" value={owner.invoice_mode} onChange={(e) => setOwner({ ...owner, invoice_mode: e.target.value })}>
+                <option value="fa">فقط فارسی — ایران (ریال/تومان، قالب فارسی)</option>
+                <option value="de">فقط آلمانی — Deutschland (EUR، §19 Kleinunternehmer)</option>
+                <option value="both">جامع — هر دو زبان و همهٔ ارزها</option>
+              </select>
+              <p className="mt-1 text-xs text-gray-500">
+                این فقط پیش‌فرض‌ها و گزینه‌های نمایش را تعیین می‌کند؛ بعداً از تنظیمات قابل تغییر است.
+              </p>
+            </div>
             <button className="btn-primary" onClick={saveOwner}>ذخیره و ادامه</button>
           </div>
         )}

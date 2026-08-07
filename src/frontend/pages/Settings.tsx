@@ -74,7 +74,7 @@ function SellerSettings() {
 
 function CurrencySettings() {
   const [cfg, setCfg] = useState<Record<string, unknown>>({
-    default_currency: 'EUR', default_invoice_language: 'de',
+    invoice_mode: 'both', currency: 'EUR', invoice_language: 'de',
     redenomination_active: false, qeran_per_new_unit: 100, redenomination_effective_date: '',
   });
   const [msg, setMsg] = useState<string | null>(null);
@@ -91,15 +91,20 @@ function CurrencySettings() {
     <div>
       <h1 className="mb-4 text-2xl font-bold">پول ملی و حذف صفر</h1>
       {msg && <div className="mb-3 rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-700">{msg}</div>}
-      <div className="card grid grid-cols-2 gap-3">
+      <div className="card grid grid-cols-2 gap-3 md:grid-cols-3">
+        <div><label className="label">حالت نصب</label>
+          <select className="input" value={String(cfg.invoice_mode)} onChange={(e) => set('invoice_mode', e.target.value)}>
+            <option value="fa">فقط فارسی</option><option value="de">فقط آلمانی</option><option value="both">جامع</option>
+          </select>
+        </div>
         <div><label className="label">ارز پیش‌فرض فاکتور</label>
-          <select className="input" value={String(cfg.default_currency)} onChange={(e) => set('default_currency', e.target.value)}>
+          <select className="input" value={String(cfg.currency)} onChange={(e) => set('currency', e.target.value)}>
             <option value="EUR">یورو (EUR)</option><option value="IRR">ریال (IRR)</option>
             <option value="IRT">تومان (IRT)</option><option value="IRT_NEW">تومان جدید / قران</option>
           </select>
         </div>
         <div><label className="label">زبان پیش‌فرض فاکتور</label>
-          <select className="input" value={String(cfg.default_invoice_language)} onChange={(e) => set('default_invoice_language', e.target.value)}>
+          <select className="input" value={String(cfg.invoice_language)} onChange={(e) => set('invoice_language', e.target.value)}>
             <option value="de">آلمانی</option><option value="fa">فارسی</option>
           </select>
         </div>
