@@ -113,6 +113,25 @@ angeben. Danach ist `/setup` geschlossen.
 
 Ein **Global API Key** wird nie akzeptiert — nur **Scoped API Tokens**.
 
+## Mehrwährung + persische Rechnungen (چندارزی و فاکتور فارسی)
+
+- **Währungen**: EUR (Cent), **IRR/ریال** und **IRT/تومان** (ganzzahlig, ohne
+  Sub-Einheit) sowie die zukünftige redenominierte Einheit **IRT_NEW** mit
+  Sub-Einheit **قران**. Auswahl pro Rechnung (`currency`). Beträge bleiben immer
+  Integer-Minor-Units der jeweiligen Währung — kein Float.
+- **Sprache pro Rechnung**: `de` (deutsche Vorlage, §19) oder `fa` (persische
+  RTL-Vorlage «فاکتور فروش», persische Ziffern). Auswahl im Formular „فاکتور جدید“.
+- **حذف صفر (Redenomination)**: 1 neue Einheit = 10.000 alte Rial, «قران» als
+  Sub-Einheit. Da Datum und exaktes قران-Verhältnis noch **nicht** feststehen,
+  ist die Funktion **standardmäßig deaktiviert** und konfigurierbar
+  (Einstellungen → „پول ملی و حذف صفر“). Sie wird **nie automatisch** auf
+  bestehende Rechnungen angewandt — ausgegebene Rechnungen behalten ihre
+  gespeicherte Währung (Unveränderlichkeit). Umrechnung (`oldRialToNewMinor`)
+  steht als Reporting-Helfer bereit. Siehe `src/config/currencies.ts`.
+
+> Persische/Iran-Rechnungen sind KEIN §19-UStG-Kontext — der deutsche
+> Kleinunternehmer-Hinweis erscheint nur bei `de` + EUR.
+
 ## Weitere Dokumente
 
 - [ARCHITECTURE.md](./ARCHITECTURE.md) · [SECURITY.md](./SECURITY.md)

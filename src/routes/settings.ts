@@ -214,3 +214,18 @@ settingsRoutes.get('/group/:group', async (c) => {
   const group = c.req.param('group').toUpperCase() as 'GENERAL';
   return ok(c, await getGroup(c.env.DB, group));
 });
+
+/** Generic group write — used e.g. by the national-currency / redenomination panel. */
+const GROUPS = ['GENERAL', 'INVOICE', 'EMAIL_INBOUND', 'EMAIL_OUTBOUND', 'EINVOICE', 'SECURITY', 'CLOUDFLARE', 'ARCHIVE', 'LOCALIZATION'] as const;
+settingsRoutes.put('/group/:group', requireRole('OWNER', 'ADMIN'), async (c) => {
+  const raw = c.req.param('group').toUpperCase();
+  if (!GROUPS.includes(raw as (typeof GROUPS)[number])) throw new AppError('VALIDATION_ERROR', 'unknown group');
+  const group = raw as (typeof GROUPS)[number];
+  const body = await parseBody(c, z.record(z.unknown()));
+  const email = c.get('actor')!.email;
+  for (const [key, value] of Object.entries(body)) {
+    await setSetting(c.env.DB, group, key, value, { updatedBy: email });
+  }
+  await audit(c.env.DB, { entityType: 'settings', eventType: 'SETTING_UPDATED', actorEmail: email, metadata: { group, keys: Object.keys(body) } });
+  return ok(c, await getGroup(c.env.DB, group));
+});

@@ -6,7 +6,7 @@
  * the mandatory §19 note. Fonts are system fonts (no external dependency), so
  * the PDF text stays selectable/searchable (not an image).
  */
-import { formatEuro, formatDateDe } from '../../lib/format';
+import { formatMoneyLatin, formatDateDe } from '../../lib/format';
 import { DE_LABELS } from '../../config/constants';
 import type { DocumentType } from '../../config/constants';
 
@@ -45,6 +45,8 @@ export interface TemplateData {
   showBank: boolean;
   /** When true, overlays an ENTWURF watermark (draft preview). */
   draft: boolean;
+  /** Output language: 'de' (German template) or 'fa' (Persian template). */
+  language?: 'de' | 'fa';
 }
 
 function esc(v: unknown): string {
@@ -76,14 +78,14 @@ export function renderInvoiceHtml(d: TemplateData): string {
 
   const rows = d.items.map((it) => {
     const rights = it.rightsText ? `<div class="rights">${esc(it.rightsText)}</div>` : '';
-    const discount = it.discountCents ? `<div class="disc">abzügl. ${formatEuro(it.discountCents, cur)}</div>` : '';
+    const discount = it.discountCents ? `<div class="disc">abzügl. ${formatMoneyLatin(it.discountCents, cur)}</div>` : '';
     return `<tr>
       <td class="pos">${it.position}</td>
       <td class="desc">${esc(it.description)}${rights}</td>
       <td class="num">${esc(it.quantity)}</td>
       <td class="unit">${esc(it.unit)}</td>
-      <td class="num">${formatEuro(it.unitPriceCents, cur)}</td>
-      <td class="num">${formatEuro(it.lineTotalCents, cur)}${discount}</td>
+      <td class="num">${formatMoneyLatin(it.unitPriceCents, cur)}</td>
+      <td class="num">${formatMoneyLatin(it.lineTotalCents, cur)}${discount}</td>
     </tr>`;
   }).join('');
 
@@ -193,7 +195,7 @@ export function renderInvoiceHtml(d: TemplateData): string {
   </table>
 
   <div class="total-box"><div class="inner">
-    <div class="total-line"><span>${DE_LABELS.rechnungsbetrag}</span><span>${formatEuro(d.totalCents, cur)}</span></div>
+    <div class="total-line"><span>${DE_LABELS.rechnungsbetrag}</span><span>${formatMoneyLatin(d.totalCents, cur)}</span></div>
   </div></div>
 
   <div class="tax-note">${esc(d.taxExemptionText)}</div>

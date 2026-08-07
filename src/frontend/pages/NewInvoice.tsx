@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api, euro } from '../api';
+import { api } from '../api';
+import { money, unitLabel } from '../currency';
 
 interface Customer { id: string; customer_code: string; company_name: string | null; last_name: string | null; city: string | null; }
 interface Template { id: string; name: string; default_description: string; unit: string; default_price_cents: number; }
@@ -16,6 +17,8 @@ export function NewInvoice() {
   const [items, setItems] = useState<Item[]>([]);
   const [projectName, setProjectName] = useState('');
   const [invoiceDate, setInvoiceDate] = useState('');
+  const [currency, setCurrency] = useState('EUR');
+  const [language, setLanguage] = useState<'de' | 'fa'>('de');
   const [err, setErr] = useState<string | null>(null);
   const [invoiceId, setInvoiceId] = useState<string | null>(null);
   const servicesRef = useRef<HTMLDivElement>(null);
@@ -48,6 +51,8 @@ export function NewInvoice() {
       customer_id: customer!.id,
       project_name: projectName || undefined,
       invoice_date: invoiceDate || undefined,
+      currency,
+      invoice_language: language,
       tax_scenario: 'KLEINUNTERNEHMER_DE',
       items: items.map((it) => ({ ...it })),
     };
@@ -88,9 +93,23 @@ export function NewInvoice() {
 
       {customer && (
         <>
-          <div className="card mb-4 grid grid-cols-2 gap-3">
+          <div className="card mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
             <div><label className="label">نام پروژه</label><input className="input" value={projectName} onChange={(e) => setProjectName(e.target.value)} /></div>
             <div><label className="label">تاریخ صدور (اختیاری)</label><input className="input" type="date" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} /></div>
+            <div><label className="label">ارز</label>
+              <select className="input" value={currency} onChange={(e) => setCurrency(e.target.value)}>
+                <option value="EUR">یورو (EUR)</option>
+                <option value="IRR">ریال (IRR)</option>
+                <option value="IRT">تومان (IRT)</option>
+                <option value="IRT_NEW">تومان جدید / قران (پس از حذف صفر)</option>
+              </select>
+            </div>
+            <div><label className="label">زبان فاکتور</label>
+              <select className="input" value={language} onChange={(e) => setLanguage(e.target.value as 'de' | 'fa')}>
+                <option value="de">آلمانی (Deutsch)</option>
+                <option value="fa">فارسی</option>
+              </select>
+            </div>
           </div>
 
           <div ref={servicesRef} className="card mb-4">
@@ -104,7 +123,7 @@ export function NewInvoice() {
 
           <div className="card mb-4 overflow-x-auto">
             <table className="data">
-              <thead><tr><th>شرح</th><th>تعداد</th><th>واحد</th><th>قیمت واحد (Cent)</th><th>تخفیف</th><th>مبلغ</th></tr></thead>
+              <thead><tr><th>شرح</th><th>تعداد</th><th>واحد</th><th>{unitLabel(currency)}</th><th>تخفیف</th><th>مبلغ</th></tr></thead>
               <tbody>
                 {items.map((it, i) => (
                   <tr key={i}>
@@ -113,13 +132,17 @@ export function NewInvoice() {
                     <td>{it.unit}</td>
                     <td><input className="input w-28" dir="ltr" type="number" value={it.unit_price_cents} onChange={(e) => updateItem(i, { unit_price_cents: Number(e.target.value) })} /></td>
                     <td><input className="input w-24" dir="ltr" type="number" value={it.discount_cents} onChange={(e) => updateItem(i, { discount_cents: Number(e.target.value) })} /></td>
-                    <td className="whitespace-nowrap font-mono">{euro(lineTotal(it))}</td>
+                    <td className="whitespace-nowrap font-mono">{money(lineTotal(it), currency)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            <div className="mt-3 text-left text-lg font-bold">Rechnungsbetrag: {euro(total)}</div>
-            <p className="mt-1 text-left text-xs text-gray-500">Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.</p>
+            <div className="mt-3 text-left text-lg font-bold">
+              {language === 'fa' ? 'مبلغ کل: ' : 'Rechnungsbetrag: '}{money(total, currency)}
+            </div>
+            {language === 'de' && currency === 'EUR' && (
+              <p className="mt-1 text-left text-xs text-gray-500">Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.</p>
+            )}
           </div>
 
           <div className="flex gap-2">

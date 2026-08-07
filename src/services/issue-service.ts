@@ -28,7 +28,7 @@ import { yearOf } from '../lib/format';
 import { reserveNumber, confirmNumber, voidNumber } from './sequence-service';
 import { getInvoiceSettings } from './settings-service';
 import { PREFIX_BY_TYPE, DEFAULTS } from '../config/constants';
-import { renderInvoiceHtml } from './pdf/template';
+import { renderInvoiceDocument } from './pdf/render';
 import { generatePdf } from './pdf/renderer';
 import { storeImmutable } from './archive-service';
 import { audit } from './audit-service';
@@ -85,7 +85,12 @@ export async function issueInvoice(
   const { invoiceDate, dueDate } = await resolveDates(db, invoice);
   const sellerSnapshot = snapshotSeller(seller);
   const customerSnapshot = snapshotCustomer(customer);
-  const taxText = settings.tax_exemption_text || seller.tax_exemption_text || DEFAULTS.taxExemptionText;
+  const language = (invoice.invoice_language === 'fa' ? 'fa' : 'de') as 'de' | 'fa';
+  // The German §19 note only applies to German output. For Persian invoices the
+  // optional note comes from the invoice's public_note (or none).
+  const taxText = language === 'fa'
+    ? (invoice.public_note ?? '')
+    : (settings.tax_exemption_text || seller.tax_exemption_text || DEFAULTS.taxExemptionText);
 
   const canonical = {
     document_type: invoice.document_type,
@@ -145,7 +150,8 @@ export async function issueInvoice(
   await audit(db, { entityType: 'invoice', entityId: invoiceId, eventType: 'INVOICE_NUMBER_RESERVED', actorEmail, metadata: { number: alloc.formatted } });
 
   try {
-    const html = renderInvoiceHtml({
+    const html = renderInvoiceDocument({
+      language,
       invoiceNumber: alloc.formatted,
       documentType: invoice.document_type as DocumentType,
       invoiceDate,

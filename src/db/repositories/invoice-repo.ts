@@ -20,6 +20,8 @@ export interface Invoice {
   service_period_end: string | null;
   due_date: string | null;
   currency: string;
+  invoice_language: string;
+  currency_snapshot: string | null;
   tax_scenario: TaxScenario;
   subtotal_cents: number;
   discount_cents: number;
@@ -83,10 +85,10 @@ export async function createDraft(db: D1Database, partial: Partial<Invoice>): Pr
     db,
     `INSERT INTO invoices
        (id, status, document_type, customer_id, project_number, project_name, invoice_date,
-        service_date, service_period_start, service_period_end, due_date, currency, tax_scenario,
-        buyer_reference, purchase_order_reference, order_reference, public_note, internal_note,
-        customer_snapshot_json)
-     VALUES (?1,'DRAFT',?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)`,
+        service_date, service_period_start, service_period_end, due_date, currency, invoice_language,
+        tax_scenario, buyer_reference, purchase_order_reference, order_reference, public_note,
+        internal_note, customer_snapshot_json)
+     VALUES (?1,'DRAFT',?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19)`,
     id,
     partial.document_type ?? 'RECHNUNG',
     partial.customer_id ?? null,
@@ -98,6 +100,7 @@ export async function createDraft(db: D1Database, partial: Partial<Invoice>): Pr
     partial.service_period_end ?? null,
     partial.due_date ?? null,
     partial.currency ?? 'EUR',
+    partial.invoice_language ?? 'de',
     partial.tax_scenario ?? 'KLEINUNTERNEHMER_DE',
     partial.buyer_reference ?? null,
     partial.purchase_order_reference ?? null,
@@ -152,13 +155,13 @@ export async function updateDraftHeader(db: D1Database, invoiceId: string, patch
        document_type=?2, customer_id=?3, project_number=?4, project_name=?5, invoice_date=?6,
        service_date=?7, service_period_start=?8, service_period_end=?9, due_date=?10, currency=?11,
        tax_scenario=?12, buyer_reference=?13, purchase_order_reference=?14, order_reference=?15,
-       public_note=?16, internal_note=?17, customer_snapshot_json=?18,
+       public_note=?16, internal_note=?17, customer_snapshot_json=?18, invoice_language=?19,
        updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
      WHERE id=?1`,
     invoiceId, m.document_type, m.customer_id, m.project_number, m.project_name, m.invoice_date,
     m.service_date, m.service_period_start, m.service_period_end, m.due_date, m.currency, m.tax_scenario,
     m.buyer_reference, m.purchase_order_reference, m.order_reference, m.public_note, m.internal_note,
-    m.customer_snapshot_json,
+    m.customer_snapshot_json, m.invoice_language,
   );
 }
 

@@ -19,7 +19,7 @@ import { getPaymentSummary } from '../services/payment-service';
 import { snapshotSeller } from '../services/seller-service';
 import { snapshotCustomer } from '../services/customer-service';
 import { getInvoiceSettings } from '../services/settings-service';
-import { renderInvoiceHtml } from '../services/pdf/template';
+import { renderInvoiceDocument } from '../services/pdf/render';
 import { newId } from '../lib/ids';
 import type { DocumentType } from '../config/constants';
 
@@ -71,8 +71,9 @@ invoiceRoutes.get('/:id/preview', async (c) => {
   const { invoiceDate, dueDate } = await resolveDates(c.env.DB, invoice);
   const isDraft = invoice.status === 'DRAFT' || invoice.status === 'READY_TO_ISSUE';
 
-  const html = renderInvoiceHtml({
-    invoiceNumber: invoice.invoice_number ?? 'ENTWURF',
+  const html = renderInvoiceDocument({
+    language: invoice.invoice_language === 'fa' ? 'fa' : 'de',
+    invoiceNumber: invoice.invoice_number ?? (invoice.invoice_language === 'fa' ? 'پیش‌نویس' : 'ENTWURF'),
     documentType: invoice.document_type as DocumentType,
     invoiceDate, dueDate,
     serviceDate: invoice.service_date,

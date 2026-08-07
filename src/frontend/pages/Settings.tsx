@@ -12,6 +12,7 @@ export function Settings() {
           {[
             ['', 'مشخصات فریلنسر'],
             ['general', 'عمومی'],
+            ['currency', 'پول ملی و حذف صفر'],
             ['invoice', 'فاکتورها'],
             ['einvoice', 'E-Rechnung و Validator'],
             ['users', 'کاربران و دسترسی‌ها'],
@@ -26,6 +27,7 @@ export function Settings() {
         <Routes>
           <Route index element={<SellerSettings />} />
           <Route path="general" element={<GenericGroup title="تنظیمات عمومی" path="/settings/general" />} />
+          <Route path="currency" element={<CurrencySettings />} />
           <Route path="invoice" element={<GenericGroup title="تنظیمات فاکتور" path="/settings/invoice" />} />
           <Route path="einvoice" element={<GenericGroup title="E-Rechnung و Validator" path="/settings/einvoice" />} />
           <Route path="users" element={<Users />} />
@@ -66,6 +68,62 @@ function SellerSettings() {
           <textarea className="input" rows={2} value={String(form.tax_exemption_text ?? '')} onChange={(e) => setForm({ ...form, tax_exemption_text: e.target.value })} /></div>
         <div className="col-span-full"><button className="btn-primary" onClick={save}>ذخیره</button></div>
       </div>
+    </div>
+  );
+}
+
+function CurrencySettings() {
+  const [cfg, setCfg] = useState<Record<string, unknown>>({
+    default_currency: 'EUR', default_invoice_language: 'de',
+    redenomination_active: false, qeran_per_new_unit: 100, redenomination_effective_date: '',
+  });
+  const [msg, setMsg] = useState<string | null>(null);
+  useEffect(() => {
+    api.get<Record<string, unknown>>('/settings/group/LOCALIZATION').then((d) => setCfg((c) => ({ ...c, ...d }))).catch(() => {});
+  }, []);
+  async function save() {
+    setMsg(null);
+    try { await api.put('/settings/group/LOCALIZATION', cfg); setMsg('ذخیره شد.'); }
+    catch (e) { setMsg((e as Error).message); }
+  }
+  const set = (k: string, v: unknown) => setCfg({ ...cfg, [k]: v });
+  return (
+    <div>
+      <h1 className="mb-4 text-2xl font-bold">پول ملی و حذف صفر</h1>
+      {msg && <div className="mb-3 rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-700">{msg}</div>}
+      <div className="card grid grid-cols-2 gap-3">
+        <div><label className="label">ارز پیش‌فرض فاکتور</label>
+          <select className="input" value={String(cfg.default_currency)} onChange={(e) => set('default_currency', e.target.value)}>
+            <option value="EUR">یورو (EUR)</option><option value="IRR">ریال (IRR)</option>
+            <option value="IRT">تومان (IRT)</option><option value="IRT_NEW">تومان جدید / قران</option>
+          </select>
+        </div>
+        <div><label className="label">زبان پیش‌فرض فاکتور</label>
+          <select className="input" value={String(cfg.default_invoice_language)} onChange={(e) => set('default_invoice_language', e.target.value)}>
+            <option value="de">آلمانی</option><option value="fa">فارسی</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="card mt-4">
+        <div className="mb-2 font-semibold">آماده‌سازی حذف صفر (تومان جدید / قران)</div>
+        <div className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+          طبق مصوبه، هر ۱ واحد پول جدید معادل ۱۰٬۰۰۰ ریال قدیم است و «قران» واحد خرد آن است.
+          زمان اجرای رسمی هنوز مشخص نیست، بنابراین این بخش به‌صورت پیش‌فرض غیرفعال است و روی فاکتورهای قبلی هیچ اثری ندارد.
+          فاکتورهای صادرشده همیشه با ارز ثبت‌شدهٔ خودشان باقی می‌مانند (تغییرناپذیر).
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={Boolean(cfg.redenomination_active)} onChange={(e) => set('redenomination_active', e.target.checked)} />
+            فعال‌سازی واحد جدید (پس از اعلام رسمی بانک مرکزی)
+          </label>
+          <div><label className="label">تعداد قران در هر واحد جدید</label>
+            <input className="input" dir="ltr" type="number" value={Number(cfg.qeran_per_new_unit ?? 100)} onChange={(e) => set('qeran_per_new_unit', Number(e.target.value))} /></div>
+          <div><label className="label">تاریخ اجرا (در صورت اعلام)</label>
+            <input className="input" type="date" value={String(cfg.redenomination_effective_date ?? '')} onChange={(e) => set('redenomination_effective_date', e.target.value)} /></div>
+        </div>
+      </div>
+      <button className="btn-primary mt-3" onClick={save}>ذخیره</button>
     </div>
   );
 }

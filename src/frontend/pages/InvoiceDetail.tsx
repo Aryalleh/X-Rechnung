@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { api, euro } from '../api';
+import { api } from '../api';
+import { money } from '../currency';
 
 interface Detail {
-  invoice: { id: string; invoice_number: string | null; status: string; total_cents: number; document_type: string; due_date: string | null; };
+  invoice: { id: string; invoice_number: string | null; status: string; total_cents: number; currency: string; document_type: string; due_date: string | null; };
   items: { id: string; description: string; quantity_decimal: string; unit: string; line_total_cents: number }[];
   payments: { paidCents: number; remainingCents: number; payments: { payment_date: string; amount_cents: number; payment_method: string }[] };
   relations: { related_invoice_id: string; relation_type: string }[];
@@ -56,17 +57,19 @@ export function InvoiceDetail() {
           <thead><tr><th>شرح</th><th>تعداد</th><th>واحد</th><th>مبلغ</th></tr></thead>
           <tbody>
             {d.items.map((it) => (
-              <tr key={it.id}><td>{it.description}</td><td dir="ltr">{it.quantity_decimal}</td><td>{it.unit}</td><td className="font-mono">{euro(it.line_total_cents)}</td></tr>
+              <tr key={it.id}><td>{it.description}</td><td dir="ltr">{it.quantity_decimal}</td><td>{it.unit}</td><td className="font-mono">{money(it.line_total_cents, inv.currency)}</td></tr>
             ))}
           </tbody>
         </table>
-        <div className="mt-2 text-left text-lg font-bold">Rechnungsbetrag: {euro(inv.total_cents)}</div>
-        <p className="text-left text-xs text-gray-500">Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.</p>
+        <div className="mt-2 text-left text-lg font-bold">{money(inv.total_cents, inv.currency)}</div>
+        {inv.currency === 'EUR' && (
+          <p className="text-left text-xs text-gray-500">Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.</p>
+        )}
       </div>
 
       <div className="card mb-4">
         <div className="mb-2 font-semibold">پرداخت‌ها</div>
-        <div className="mb-2 text-sm">پرداخت‌شده: {euro(d.payments.paidCents)} — مانده: {euro(d.payments.remainingCents)}</div>
+        <div className="mb-2 text-sm">پرداخت‌شده: {money(d.payments.paidCents, inv.currency)} — مانده: {money(d.payments.remainingCents, inv.currency)}</div>
         {!isDraft && (
           <div className="flex flex-wrap items-end gap-2">
             <div><label className="label">تاریخ</label><input className="input" type="date" value={pay.payment_date} onChange={(e) => setPay({ ...pay, payment_date: e.target.value })} /></div>

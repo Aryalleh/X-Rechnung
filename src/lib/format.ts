@@ -1,4 +1,56 @@
-/** German (de-DE) formatting for amounts and dates. No external deps. */
+/** German (de-DE) + Persian (fa-IR) formatting for amounts and dates. No external deps. */
+import { getCurrency } from '../config/currencies';
+
+const PERSIAN_DIGITS = ['۰', '۱', '۲', '۳', '۴', '۵', '۶', '۷', '۸', '۹'];
+
+/** Map ASCII digits to Persian digits. */
+export function toPersianDigits(s: string): string {
+  return s.replace(/[0-9]/g, (d) => PERSIAN_DIGITS[Number(d)]!);
+}
+
+/**
+ * Format an integer minor amount in ANY registered currency (EUR, IRR/Rial,
+ * IRT/Toman, IRT_NEW). Storage stays integer; formatting uses per-currency
+ * separators, decimals, sub-unit and (for fa) Persian digits.
+ *   formatMoney(125000, 'EUR')  -> "1.250,00 €"
+ *   formatMoney(2500000, 'IRR') -> "۲٬۵۰۰٬۰۰۰ ریال"
+ *   formatMoney(250000, 'IRT')  -> "۲۵۰٬۰۰۰ تومان"
+ */
+export function formatMoney(minorAmount: number, code: string, opts: { withSuffix?: boolean } = {}): string {
+  const c = getCurrency(code);
+  const negative = minorAmount < 0;
+  const abs = Math.abs(minorAmount);
+  const major = Math.trunc(abs / c.minorPerMajor);
+  const minor = abs % c.minorPerMajor;
+
+  let digits = groupWith(major.toString(), c.groupSeparator);
+  if (c.decimals > 0) {
+    const minorStr = String(minor).padStart(c.decimals, '0').slice(0, c.decimals);
+    digits += c.decimalSeparator + minorStr;
+  }
+  if (c.usePersianDigits) digits = toPersianDigits(digits);
+  const sign = negative ? '-' : '';
+  const suffix = opts.withSuffix === false ? '' : ` ${c.suffixFa}`;
+  return `${sign}${digits}${suffix}`.trim();
+}
+
+/** Latin-script money for the German invoice template (EUR etc.). */
+export function formatMoneyLatin(minorAmount: number, code: string): string {
+  const c = getCurrency(code);
+  if (code === 'EUR') return formatEuro(minorAmount);
+  const negative = minorAmount < 0;
+  const abs = Math.abs(minorAmount);
+  const major = Math.trunc(abs / c.minorPerMajor);
+  const minor = abs % c.minorPerMajor;
+  let digits = groupWith(major.toString(), '.');
+  if (c.decimals > 0) digits += ',' + String(minor).padStart(c.decimals, '0');
+  return `${negative ? '-' : ''}${digits} ${c.suffixLatin}`.trim();
+}
+
+function groupWith(digits: string, sep: string): string {
+  return digits.replace(/\B(?=(\d{3})+(?!\d))/g, sep);
+}
+
 
 /** 125000 cents -> "1.250,00 €" */
 export function formatEuro(cents: number, currency = 'EUR'): string {

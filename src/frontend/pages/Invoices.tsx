@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, euro } from '../api';
+import { api } from '../api';
+import { money } from '../currency';
 
-interface Invoice { id: string; invoice_number: string | null; document_type: string; status: string; total_cents: number; invoice_date: string | null; due_date: string | null; }
+interface Invoice { id: string; invoice_number: string | null; document_type: string; status: string; total_cents: number; currency: string; invoice_date: string | null; due_date: string | null; }
 
 const STATUS_LABEL: Record<string, string> = {
   DRAFT: 'پیش‌نویس', READY_TO_ISSUE: 'آماده صدور', ISSUED: 'صادرشده', SENT: 'ارسال‌شده',
@@ -31,7 +32,7 @@ export function Invoices() {
                 <td>{r.document_type}</td>
                 <td dir="ltr">{r.invoice_date ?? ''}</td>
                 <td dir="ltr">{r.due_date ?? ''}</td>
-                <td className="font-mono">{euro(r.total_cents)}</td>
+                <td className="font-mono">{money(r.total_cents, r.currency)}</td>
                 <td>{STATUS_LABEL[r.status] ?? r.status}</td>
               </tr>
             ))}
