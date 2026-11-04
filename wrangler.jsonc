@@ -30,14 +30,14 @@
     "binding": "ASSETS",
     "not_found_handling": "single-page-application"
   },
-
-  // D1 — create with EU jurisdiction:
-  //   wrangler d1 create x-rechnung --location=weur
+  // D1 is automatically provisioned by Cloudflare Workers Builds.
+  // Keep the binding name and database name; do not hardcode an account-specific UUID.
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "x-rechnung",
-      "database_id": "973560a3-e3d7-4cd2-9799-05c6e598d827",
+      "migrations_dir": "migrations"
+    }
       "migrations_dir": "migrations"
     }
   ],
