@@ -18,7 +18,7 @@ export function NewInvoice() {
   const [projectName, setProjectName] = useState('');
   const [invoiceDate, setInvoiceDate] = useState('');
   const [currency, setCurrency] = useState('EUR');
-  const [language, setLanguage] = useState<'de' | 'fa'>('de');
+  const [language, setLanguage] = useState<'de' | 'fa' | 'en'>('de');
   const [mode, setMode] = useState<'fa' | 'de' | 'both'>('both');
   const [err, setErr] = useState<string | null>(null);
   const [invoiceId, setInvoiceId] = useState<string | null>(null);
@@ -31,7 +31,7 @@ export function NewInvoice() {
       .then((g) => {
         setMode(g.invoice_mode);
         setCurrency(g.currency || (g.invoice_mode === 'fa' ? 'IRT' : 'EUR'));
-        setLanguage((g.invoice_language as 'de' | 'fa') || (g.invoice_mode === 'fa' ? 'fa' : 'de'));
+        setLanguage((g.invoice_language as 'de' | 'fa' | 'en') || (g.invoice_mode === 'fa' ? 'fa' : 'de'));
       })
       .catch(() => {});
   }, []);
@@ -45,7 +45,7 @@ export function NewInvoice() {
     ? [['de', 'آلمانی (Deutsch)']]
     : mode === 'fa'
       ? [['fa', 'فارسی']]
-      : [['de', 'آلمانی (Deutsch)'], ['fa', 'فارسی']];
+      : [['de', 'آلمانی (Deutsch)'], ['fa', 'فارسی'], ['en', 'انگلیسی (English)']];
 
   async function lookup() {
     setErr(null);
@@ -124,7 +124,7 @@ export function NewInvoice() {
               </select>
             </div>
             <div><label className="label">زبان فاکتور</label>
-              <select className="input" value={language} onChange={(e) => setLanguage(e.target.value as 'de' | 'fa')}>
+              <select className="input" value={language} onChange={(e) => setLanguage(e.target.value as 'de' | 'fa' | 'en')}>
                 {languageOptions.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
               </select>
             </div>

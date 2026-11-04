@@ -105,7 +105,7 @@ function CurrencySettings() {
         </div>
         <div><label className="label">زبان پیش‌فرض فاکتور</label>
           <select className="input" value={String(cfg.invoice_language)} onChange={(e) => set('invoice_language', e.target.value)}>
-            <option value="de">آلمانی</option><option value="fa">فارسی</option>
+            <option value="de">آلمانی</option><option value="fa">فارسی</option><option value="en">انگلیسی</option>
           </select>
         </div>
       </div>

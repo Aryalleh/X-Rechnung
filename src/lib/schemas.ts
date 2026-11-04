@@ -89,7 +89,7 @@ export const invoiceDraftSchema = z.object({
   service_period_end: isoDate.optional(),
   due_date: isoDate.optional(),
   currency: z.enum(['EUR', 'IRR', 'IRT', 'IRT_NEW']).default('EUR'),
-  invoice_language: z.enum(['de', 'fa']).default('de'),
+  invoice_language: z.enum(['de', 'fa', 'en']).default('de'),
   tax_scenario: z.enum(TAX_SCENARIOS).default('KLEINUNTERNEHMER_DE'),
   document_type: z.enum(DOCUMENT_TYPES).default('RECHNUNG'),
   buyer_reference: z.string().optional(),

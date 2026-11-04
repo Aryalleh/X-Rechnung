@@ -65,6 +65,8 @@ export interface InvoiceSettings {
   filename_pattern: string;
   invoice_language: string;
   tax_exemption_text: string;
+  accent_color: string;
+  brand_heading: string | null;
 }
 
 export async function getInvoiceSettings(db: D1Database): Promise<InvoiceSettings> {
@@ -83,6 +85,8 @@ export async function getInvoiceSettings(db: D1Database): Promise<InvoiceSetting
     filename_pattern: (s.filename_pattern as string) ?? '{number}_{customer}.pdf',
     invoice_language: (s.invoice_language as string) ?? DEFAULTS.invoiceLanguage,
     tax_exemption_text: (s.tax_exemption_text as string) ?? DEFAULTS.taxExemptionText,
+    accent_color: (s.accent_color as string) ?? '#F2EA00',
+    brand_heading: (s.brand_heading as string) ?? null,
   };
 }
 

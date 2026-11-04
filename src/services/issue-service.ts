@@ -85,12 +85,16 @@ export async function issueInvoice(
   const { invoiceDate, dueDate } = await resolveDates(db, invoice);
   const sellerSnapshot = snapshotSeller(seller);
   const customerSnapshot = snapshotCustomer(customer);
-  const language = (invoice.invoice_language === 'fa' ? 'fa' : 'de') as 'de' | 'fa';
-  // The German §19 note only applies to German output. For Persian invoices the
-  // optional note comes from the invoice's public_note (or none).
+  const language = (['fa', 'en', 'de'].includes(invoice.invoice_language) ? invoice.invoice_language : 'de') as 'de' | 'fa' | 'en';
+  // The §19 Kleinunternehmer exemption note is shown on German and English EUR
+  // invoices (localized). For Persian/Iran invoices the optional note comes from
+  // public_note (usually none).
+  const EN_19 = 'In accordance with § 19 of the German VAT Act (UStG), no VAT is charged.';
   const taxText = language === 'fa'
     ? (invoice.public_note ?? '')
-    : (settings.tax_exemption_text || seller.tax_exemption_text || DEFAULTS.taxExemptionText);
+    : language === 'en'
+      ? (invoice.currency === 'EUR' ? EN_19 : (invoice.public_note ?? ''))
+      : (settings.tax_exemption_text || seller.tax_exemption_text || DEFAULTS.taxExemptionText);
 
   const canonical = {
     document_type: invoice.document_type,
@@ -178,10 +182,13 @@ export async function issueInvoice(
         rightsText: it.rights_text,
       })),
       totalCents: totals.totalCents,
+      subtotalCents: totals.subtotalCents,
       taxExemptionText: taxText,
       paymentTermsText: settings.payment_terms_text,
       thanksText: settings.thanks_text,
       showBank: settings.show_bank,
+      accentColor: settings.accent_color,
+      brandHeading: settings.brand_heading ?? undefined,
       draft: false,
     });
 

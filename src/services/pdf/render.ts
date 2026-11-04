@@ -1,7 +1,8 @@
-/** Picks the invoice template by output language (de → German, fa → Persian). */
+/** Renders an invoice document. Language (de/en/fa) is carried in TemplateData. */
 import { renderInvoiceHtml, type TemplateData } from './template';
-import { renderInvoiceHtmlFa } from './template-fa';
 
 export function renderInvoiceDocument(d: TemplateData): string {
-  return d.language === 'fa' ? renderInvoiceHtmlFa(d) : renderInvoiceHtml(d);
+  return renderInvoiceHtml(d);
 }
+
+export type { TemplateData };

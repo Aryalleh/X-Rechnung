@@ -70,10 +70,12 @@ invoiceRoutes.get('/:id/preview', async (c) => {
   const settings = await getInvoiceSettings(c.env.DB);
   const { invoiceDate, dueDate } = await resolveDates(c.env.DB, invoice);
   const isDraft = invoice.status === 'DRAFT' || invoice.status === 'READY_TO_ISSUE';
+  const lang = (['fa', 'en', 'de'].includes(invoice.invoice_language) ? invoice.invoice_language : 'de') as 'de' | 'fa' | 'en';
+  const draftLabel = lang === 'fa' ? 'پیش‌نویس' : lang === 'en' ? 'DRAFT' : 'ENTWURF';
 
   const html = renderInvoiceDocument({
-    language: invoice.invoice_language === 'fa' ? 'fa' : 'de',
-    invoiceNumber: invoice.invoice_number ?? (invoice.invoice_language === 'fa' ? 'پیش‌نویس' : 'ENTWURF'),
+    language: lang,
+    invoiceNumber: invoice.invoice_number ?? draftLabel,
     documentType: invoice.document_type as DocumentType,
     invoiceDate, dueDate,
     serviceDate: invoice.service_date,
@@ -92,10 +94,13 @@ invoiceRoutes.get('/:id/preview', async (c) => {
       unitPriceCents: it.unit_price_cents, discountCents: it.discount_cents, lineTotalCents: it.line_total_cents, rightsText: it.rights_text,
     })),
     totalCents: invoice.total_cents,
-    taxExemptionText: settings.tax_exemption_text || seller.tax_exemption_text,
+    subtotalCents: invoice.subtotal_cents,
+    taxExemptionText: lang === 'fa' ? (invoice.public_note ?? '') : (settings.tax_exemption_text || seller.tax_exemption_text),
     paymentTermsText: settings.payment_terms_text,
     thanksText: settings.thanks_text,
     showBank: settings.show_bank,
+    accentColor: settings.accent_color,
+    brandHeading: settings.brand_heading ?? undefined,
     draft: isDraft,
   });
   return c.html(html);
