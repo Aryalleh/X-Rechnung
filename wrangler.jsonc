@@ -38,8 +38,6 @@
       "database_name": "x-rechnung",
       "migrations_dir": "migrations"
     }
-      "migrations_dir": "migrations"
-    }
   ],
 
   // R2 — create with EU jurisdiction:
