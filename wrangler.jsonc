@@ -10,7 +10,7 @@
   //   in this file / in `wrangler secret`.
   // ---------------------------------------------------------------------------
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "x-rechnung",
+  "name": "invoice",
   "main": "src/worker.ts",
   "compatibility_date": "2024-12-30",
   "compatibility_flags": ["nodejs_compat"],
