@@ -6,14 +6,15 @@
   "description": "Invoice system for German Freiberufler / Kleinunternehmer (§19 UStG) on Cloudflare Workers",
   "scripts": {
     "dev": "vite build --watch & wrangler dev",
-    "build": "vite build",
-    "deploy": "vite build && wrangler deploy",
+    "build": "node scripts/ensure-d1.mjs && vite build",
+    "deploy": "npm run build && npx wrangler deploy",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "migrate:local": "wrangler d1 migrations apply DB --local",
     "migrate:remote": "wrangler d1 migrations apply DB --remote",
-    "seed:local": "wrangler d1 execute DB --local --file=./migrations/seed.sql"
+    "seed:local": "wrangler d1 execute DB --local --file=./migrations/seed.sql",
+    "db:ensure": "node scripts/ensure-d1.mjs"
   },
   "dependencies": {
     "@cloudflare/puppeteer": "^0.0.14",
