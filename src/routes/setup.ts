@@ -43,7 +43,7 @@ setupRoutes.post('/owner', async (c) => {
   // Validate everything BEFORE claiming, so a rejected form never locks setup.
   if (body.recovery_email && body.recovery_email.toLowerCase() === body.owner_email.toLowerCase()) {
     throw new AppError('VALIDATION_ERROR', 'recovery email must differ from owner email', {
-      recovery_email: 'ایمیل بازیابی باید با ایمیل مالک متفاوت باشد (یا خالی بگذارید).',
+      recovery_email: 'recovery_email_same_as_owner',
     });
   }
   const alreadyMine = await verifySetupClaim(c.env.DB, getCookie(c, CLAIM_COOKIE));

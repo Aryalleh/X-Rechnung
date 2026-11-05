@@ -1,5 +1,5 @@
 import type { Context } from 'hono';
-import { AppError } from './errors';
+import { AppError, messageFor, resolveUiLang } from './errors';
 
 /** Standardized API envelope. */
 export interface ApiSuccess<T> {
@@ -23,12 +23,13 @@ export function ok<T>(c: Context, data: T, status = 200) {
 
 export function fail(c: Context, err: unknown, environment: string) {
   const isProd = environment === 'production';
+  const lang = resolveUiLang(c.req.header('X-UI-Lang'), c.req.header('Accept-Language'));
   if (err instanceof AppError) {
     const body: ApiError = {
       ok: false,
       error: {
         code: err.code,
-        message: err.userMessage,
+        message: messageFor(err.code, lang),
         ...(err.fields ? { fields: err.fields } : {}),
         ...(!isProd && err.detail ? { detail: err.detail } : {}),
       },
@@ -40,7 +41,7 @@ export function fail(c: Context, err: unknown, environment: string) {
     ok: false,
     error: {
       code: 'INTERNAL',
-      message: 'خطای داخلی سیستم رخ داد.',
+      message: messageFor('INTERNAL', lang),
       ...(!isProd ? { detail } : {}),
     },
   };

@@ -1,5 +1,6 @@
 import { one, all, run } from '../client';
 import { newId, formatCustomerCode } from '../../lib/ids';
+import { rankCustomers } from '../../lib/search';
 
 export interface Customer {
   id: string;
@@ -37,14 +38,25 @@ export function getCustomerByCode(db: D1Database, code: string): Promise<Custome
   return one<Customer>(db, `SELECT * FROM customers WHERE customer_code = ?1`, code);
 }
 
-export function searchCustomers(db: D1Database, q: string, limit = 20): Promise<Customer[]> {
-  const like = `%${q}%`;
+/**
+ * Smart search: loads the (small, single-tenant) customer table and ranks it
+ * in memory with typo tolerance + German/Persian normalization.
+ */
+export async function searchCustomers(db: D1Database, q: string, limit = 20): Promise<Customer[]> {
+  const rows = await all<Customer>(db, `SELECT * FROM customers LIMIT 5000`);
+  return rankCustomers(q, rows, limit);
+}
+
+/** Customers most recently invoiced (then newest), for an empty search box. */
+export function recentCustomers(db: D1Database, limit = 8): Promise<Customer[]> {
   return all<Customer>(
     db,
-    `SELECT * FROM customers
-      WHERE customer_code LIKE ?1 OR company_name LIKE ?1 OR last_name LIKE ?1 OR email LIKE ?1
-      ORDER BY customer_code LIMIT ?2`,
-    like,
+    `SELECT c.* FROM customers c
+       LEFT JOIN (SELECT customer_id, MAX(created_at) AS last_inv FROM invoices GROUP BY customer_id) i
+         ON i.customer_id = c.id
+      WHERE c.is_active = 1
+      ORDER BY i.last_inv IS NULL, i.last_inv DESC, c.created_at DESC
+      LIMIT ?1`,
     limit,
   );
 }

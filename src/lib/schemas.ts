@@ -6,8 +6,8 @@ const cents = z.number().int();
 const quantity = z
   .string()
   .trim()
-  .regex(/^\d+([.,]\d+)?$/, 'مقدار نامعتبر است');
-const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}/, 'تاریخ نامعتبر است');
+  .regex(/^\d+([.,]\d+)?$/, 'invalid_quantity');
+const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}/, 'invalid_date');
 
 // IBAN structural check (not a full mod-97 check here; service layer does mod-97).
 const ibanRegex = /^[A-Z]{2}\d{2}[A-Z0-9]{10,30}$/;
@@ -28,17 +28,17 @@ export const sellerProfileSchema = z.object({
   ust_idnr: z.string().optional(),
   kleinunternehmer_id: z.string().optional(),
   account_holder: z.string().min(1),
-  iban: z.string().transform((s) => s.replace(/\s/g, '').toUpperCase()).pipe(z.string().regex(ibanRegex, 'IBAN نامعتبر است')),
+  iban: z.string().transform((s) => s.replace(/\s/g, '').toUpperCase()).pipe(z.string().regex(ibanRegex, 'invalid_iban')),
   bic: z.string().transform((s) => s.replace(/\s/g, '').toUpperCase()).pipe(z.string().regex(bicRegex)).optional().or(z.literal('')),
   bank_name: z.string().optional(),
   default_payment_days: z.number().int().min(0).max(365).default(14),
   footer_text: z.string().optional(),
   default_rights_text: z.string().optional(),
-  tax_exemption_text: z.string().min(1, 'متن §19 نمی‌تواند خالی باشد'),
+  tax_exemption_text: z.string().min(1, 'tax_text_required'),
   invoice_number_prefix: z.string().min(1).default('RE'),
 }).refine(
   (v) => Boolean(v.steuernummer || v.ust_idnr || v.kleinunternehmer_id),
-  { message: 'یکی از Steuernummer، USt-IdNr یا Kleinunternehmer-ID الزامی است', path: ['steuernummer'] },
+  { message: 'tax_id_required', path: ['steuernummer'] },
 );
 
 export const customerSchema = z.object({
@@ -65,7 +65,7 @@ export const customerSchema = z.object({
   internal_note: z.string().optional(),
   is_active: z.boolean().default(true),
 }).refine((v) => v.company_name || v.last_name, {
-  message: 'نام شرکت یا نام خانوادگی الزامی است',
+  message: 'company_or_last_name_required',
   path: ['company_name'],
 });
 

@@ -181,7 +181,7 @@ export async function updateInvoiceDraft(db: D1Database, id: string, body: Draft
  */
 export function enforceTaxScenario(body: DraftBody): void {
   if (body.tax_scenario === 'KLEINUNTERNEHMER_DE' && body.tax_rate_bp > 0) {
-    throw new AppError('VALIDATION_ERROR', 'VAT is not allowed in Kleinunternehmer mode', { tax_rate_bp: 'در حالت Kleinunternehmer مالیات مجاز نیست' });
+    throw new AppError('VALIDATION_ERROR', 'VAT is not allowed in Kleinunternehmer mode', { tax_rate_bp: 'vat_not_allowed_kleinunternehmer' });
   }
 }
 
@@ -193,12 +193,12 @@ export async function assertReadyToIssue(
 ): Promise<void> {
   const seller = await getActiveSeller(db);
   if (!seller) throw new AppError('SELLER_INCOMPLETE');
-  if (!invoice.customer_id) throw new AppError('VALIDATION_ERROR', 'customer required', { customer: 'مشتری الزامی است' });
+  if (!invoice.customer_id) throw new AppError('VALIDATION_ERROR', 'customer required', { customer: 'customer_required' });
   const cust = await getCustomerById(db, invoice.customer_id);
   if (!cust) throw new AppError('CUSTOMER_NOT_FOUND');
   const custComplete = Boolean((cust.company_name || cust.last_name) && cust.street && cust.postal_code && cust.city);
-  if (!custComplete) throw new AppError('VALIDATION_ERROR', 'customer address incomplete', { customer: 'آدرس مشتری کامل نیست' });
-  if (items.length === 0) throw new AppError('VALIDATION_ERROR', 'no line items', { items: 'حداقل یک ردیف لازم است' });
+  if (!custComplete) throw new AppError('VALIDATION_ERROR', 'customer address incomplete', { customer: 'customer_address_incomplete' });
+  if (items.length === 0) throw new AppError('VALIDATION_ERROR', 'no line items', { items: 'items_required' });
 }
 
 /** Resolve invoice_date and due_date defaults from settings/customer/seller. */

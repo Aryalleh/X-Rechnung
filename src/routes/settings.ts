@@ -51,9 +51,9 @@ settingsRoutes.put('/invoice', async (c) => {
   // replacing it (or dropping the §19 reference) requires explicit confirmation.
   if ('tax_exemption_text' in body) {
     const text = String(body.tax_exemption_text ?? '');
-    if (!text.trim()) throw new AppError('VALIDATION_ERROR', 'tax text cannot be empty', { tax_exemption_text: 'در حالت Kleinunternehmer نمی‌تواند خالی باشد' });
+    if (!text.trim()) throw new AppError('VALIDATION_ERROR', 'tax text cannot be empty', { tax_exemption_text: 'tax_text_required' });
     if (!/§\s*19/.test(text) && !body.confirm_tax_replace) {
-      throw new AppError('VALIDATION_ERROR', 'removing §19 reference requires confirmation', { tax_exemption_text: 'حذف اشاره به §19 نیازمند تأیید صریح است' });
+      throw new AppError('VALIDATION_ERROR', 'removing §19 reference requires confirmation', { tax_exemption_text: 'tax_text_19_confirm' });
     }
   }
   const { confirm_tax_replace: _c, ...rest } = body as Record<string, unknown>;

@@ -80,10 +80,14 @@ export function getItems(db: D1Database, invoiceId: string): Promise<InvoiceItem
 
 export function listInvoices(db: D1Database, opts: { status?: string; limit?: number } = {}): Promise<Invoice[]> {
   const limit = opts.limit ?? 100;
+  // Include a display name for the customer so lists don't need N+1 lookups.
+  const base = `SELECT i.*, c.customer_code AS customer_code,
+      COALESCE(NULLIF(c.company_name, ''), TRIM(COALESCE(c.first_name, '') || ' ' || COALESCE(c.last_name, ''))) AS customer_name
+    FROM invoices i LEFT JOIN customers c ON c.id = i.customer_id`;
   if (opts.status) {
-    return all<Invoice>(db, `SELECT * FROM invoices WHERE status = ?1 ORDER BY created_at DESC LIMIT ?2`, opts.status, limit);
+    return all<Invoice>(db, `${base} WHERE i.status = ?1 ORDER BY i.created_at DESC LIMIT ?2`, opts.status, limit);
   }
-  return all<Invoice>(db, `SELECT * FROM invoices ORDER BY created_at DESC LIMIT ?1`, limit);
+  return all<Invoice>(db, `${base} ORDER BY i.created_at DESC LIMIT ?1`, limit);
 }
 
 export async function createDraft(db: D1Database, partial: Partial<Invoice>): Promise<Invoice> {

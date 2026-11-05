@@ -16,7 +16,7 @@ export async function saveSellerProfile(
   logoKey?: string | null,
   signatureKey?: string | null,
 ): Promise<SellerProfile> {
-  if (!isValidIban(body.iban)) throw new AppError('VALIDATION_ERROR', 'IBAN checksum invalid', { iban: 'IBAN نامعتبر است' });
+  if (!isValidIban(body.iban)) throw new AppError('VALIDATION_ERROR', 'IBAN checksum invalid', { iban: 'invalid_iban' });
 
   const input: SellerInput = {
     full_name: body.full_name,

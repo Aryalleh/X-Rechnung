@@ -22,7 +22,7 @@ export async function recordPayment(db: D1Database, invoiceId: string, body: Pay
   const already = await sumPayments(db, invoiceId);
   const remaining = invoice.total_cents - already;
   if (body.amount_cents > remaining && !body.allow_overpay) {
-    throw new AppError('VALIDATION_ERROR', 'overpayment', { amount: 'مبلغ بیشتر از مانده است' });
+    throw new AppError('VALIDATION_ERROR', 'overpayment', { amount: 'overpayment' });
   }
 
   const payment = await insertPayment(db, {

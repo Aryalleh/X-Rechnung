@@ -5,7 +5,7 @@ import { AppError } from '../lib/errors';
 import { parseBody } from '../lib/validate-request';
 import { customerSchema } from '../lib/schemas';
 import {
-  listCustomers, searchCustomers, getCustomerById, getCustomerByCode, nextCustomerCode,
+  listCustomers, searchCustomers, recentCustomers, getCustomerById, getCustomerByCode, nextCustomerCode,
 } from '../db/repositories/customer-repo';
 import { createCustomer, editCustomer } from '../services/customer-service';
 import { sumPayments } from '../db/repositories/payment-repo';
@@ -16,8 +16,15 @@ export const customerRoutes = new Hono<HonoEnv>();
 
 customerRoutes.get('/', async (c) => {
   const q = c.req.query('q');
-  const rows = q ? await searchCustomers(c.env.DB, q) : await listCustomers(c.env.DB);
+  const rows = q ? await searchCustomers(c.env.DB, q, 500) : await listCustomers(c.env.DB);
   return ok(c, rows);
+});
+
+/** Smart search for pickers: ranked, typo-tolerant; empty q = recent customers. */
+customerRoutes.get('/search', async (c) => {
+  const q = (c.req.query('q') ?? '').trim();
+  const limit = Math.min(Number(c.req.query('limit') ?? 8) || 8, 50);
+  return ok(c, q ? await searchCustomers(c.env.DB, q, limit) : await recentCustomers(c.env.DB, limit));
 });
 
 customerRoutes.get('/next-code', async (c) => ok(c, { code: await nextCustomerCode(c.env.DB) }));

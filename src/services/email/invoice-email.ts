@@ -47,7 +47,7 @@ export async function sendInvoiceEmail(env: Env, invoiceId: string, input: SendI
   const out = await getGroup(env.DB, 'EMAIL_OUTBOUND');
   const customer = invoice.customer_snapshot_json ? JSON.parse(invoice.customer_snapshot_json) as Record<string, string> : {};
   const to = input.to || customer.email;
-  if (!to) throw new AppError('VALIDATION_ERROR', 'no recipient', { to: 'گیرنده مشخص نیست' });
+  if (!to) throw new AppError('VALIDATION_ERROR', 'no recipient', { to: 'no_recipient' });
 
   const vars = {
     invoiceNumber: invoice.invoice_number ?? '',
