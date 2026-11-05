@@ -1,0 +1,100 @@
+{
+  // ---------------------------------------------------------------------------
+  // X-Rechnung — Cloudflare Workers configuration
+  //
+  // IMPORTANT (per specification amendment):
+  //   NO business/tenant configuration is hardcoded here. Owner email, app name,
+  //   domains, tax numbers, invoice texts, email addresses, validator URLs etc.
+  //   are all configured from the admin panel and stored (encrypted where secret)
+  //   in D1. Only infrastructure bindings and non-business bootstrap values live
+  //   in this file / in `wrangler secret`.
+  // ---------------------------------------------------------------------------
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "invoice",
+  "main": "src/worker.ts",
+  "compatibility_date": "2024-12-30",
+  "compatibility_flags": ["nodejs_compat"],
+
+  "observability": {
+    "enabled": true
+  },
+
+  // Non-business bootstrap var only. Everything else comes from D1 settings.
+  "vars": {
+    "ENVIRONMENT": "development"
+  },
+
+  // Frontend (React/Vite build output) served as static assets.
+  "assets": {
+    "directory": "./dist/client",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
+  },
+  // D1 database. Explicit database_id so EVERY deploy (incl. Workers Builds)
+  // binds the SAME database that holds the migrated tables. Auto-provisioning
+  // (omitting the id) bound a new EMPTY DB on each build, which caused 500s
+  // because tables like setup_state/app_settings did not exist.
+  //   Create once:  wrangler d1 create x-rechnung --location=weur
+  //   Apply schema: wrangler d1 migrations apply DB --remote
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "x-rechnung",
+      "database_id": "8c1ff9c7-356f-4537-9550-de64cbe07ba1",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  // R2 — create with EU jurisdiction:
+  //   wrangler r2 bucket create x-rechnung-archive --jurisdiction eu
+  "r2_buckets": [
+    {
+      "binding": "ARCHIVE_BUCKET",
+      "bucket_name": "x-rechnung-archive",
+      "jurisdiction": "eu"
+    }
+  ],
+
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "INVOICE_SEQUENCE",
+        "class_name": "InvoiceSequence"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["InvoiceSequence"]
+    }
+  ],
+
+  "queues": {
+    "producers": [
+      {
+        "binding": "DOCUMENT_QUEUE",
+        "queue": "x-rechnung-documents"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "x-rechnung-documents",
+        "max_batch_size": 10,
+        "max_batch_timeout": 30,
+        "max_retries": 5,
+        "dead_letter_queue": "x-rechnung-documents-dlq"
+      }
+    ]
+  },
+
+  // Browser Rendering binding (PDF generation from HTML).
+
+  // Outbound email via Cloudflare Email routing send binding.
+  // The destination address must be a verified destination in Email Routing.
+
+  // Daily cron: overdue check, retry failed jobs, hash/metadata integrity, manifest.
+  "triggers": {
+    "crons": ["0 3 * * *"]
+  }
+}

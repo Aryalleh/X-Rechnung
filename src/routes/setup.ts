@@ -40,6 +40,12 @@ async function requireClaim(c: Context<HonoEnv>): Promise<void> {
  */
 setupRoutes.post('/owner', async (c) => {
   const body = await parseBody(c, setupStep1Schema);
+  // Validate everything BEFORE claiming, so a rejected form never locks setup.
+  if (body.recovery_email && body.recovery_email.toLowerCase() === body.owner_email.toLowerCase()) {
+    throw new AppError('VALIDATION_ERROR', 'recovery email must differ from owner email', {
+      recovery_email: 'ایمیل بازیابی باید با ایمیل مالک متفاوت باشد (یا خالی بگذارید).',
+    });
+  }
   const alreadyMine = await verifySetupClaim(c.env.DB, getCookie(c, CLAIM_COOKIE));
   if (!alreadyMine) {
     if ((await countActiveOwners(c.env.DB)) > 0) throw new AppError('CONFLICT', 'owner already exists');
@@ -52,10 +58,6 @@ setupRoutes.post('/owner', async (c) => {
       path: '/api/setup',
       maxAge: 60 * 60 * 24,
     });
-  }
-  if (body.recovery_email && body.recovery_email === body.owner_email) {
-    // allowed only with explicit confirm flag (kept simple: reject here)
-    throw new AppError('VALIDATION_ERROR', 'recovery email must differ from owner email', { recovery_email: 'ایمیل بازیابی باید متفاوت باشد' });
   }
   const existingOwner = alreadyMine ? await findAdminByEmail(c.env.DB, body.owner_email) : null;
   if (alreadyMine && !existingOwner && (await countActiveOwners(c.env.DB)) > 0) {

@@ -19,7 +19,9 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   const res = await fetch(`/api${path}`, { method, headers, body: payload });
   const json = (await res.json().catch(() => ({ ok: false, error: { code: 'INTERNAL', message: 'خطای شبکه' } }))) as ApiEnvelope<T>;
   if (!json.ok) {
-    const err = new Error(json.error?.message ?? 'خطا');
+    const fieldMsgs = json.error?.fields ? Object.values(json.error.fields).filter(Boolean) : [];
+    const msg = [json.error?.message ?? 'خطا', ...fieldMsgs].join(' — ');
+    const err = new Error(msg);
     (err as Error & { code?: string; fields?: unknown }).code = json.error?.code;
     (err as Error & { fields?: unknown }).fields = json.error?.fields;
     throw err;

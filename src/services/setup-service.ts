@@ -41,8 +41,9 @@ export async function ensureSetupState(
 }
 
 /**
- * Atomically claim setup for the first caller. Returns the raw claim value to
- * hand to the browser, or null if someone already claimed it.
+ * Atomically claim setup. Succeeds if nobody claimed it yet, or if a previous
+ * claim never produced an owner. Returns the raw claim value for the browser,
+ * or null if an owner already exists.
  */
 export async function claimSetup(db: D1Database): Promise<string | null> {
   const raw = randomToken(32);
@@ -54,7 +55,10 @@ export async function claimSetup(db: D1Database): Promise<string | null> {
               setup_token_created_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
               state = 'IN_PROGRESS',
               updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-        WHERE id = 1 AND setup_token_hash IS NULL AND state = 'SETUP_REQUIRED'`,
+        WHERE id = 1
+          AND state IN ('SETUP_REQUIRED','IN_PROGRESS')
+          -- unclaimed, or claimed but no owner was ever created (abandoned/failed attempt)
+          AND (setup_token_hash IS NULL OR NOT EXISTS (SELECT 1 FROM admin_users))`,
     )
     .bind(hash)
     .run();
