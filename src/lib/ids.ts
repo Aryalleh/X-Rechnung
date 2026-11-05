@@ -13,12 +13,6 @@ export function randomToken(bytes = 32): string {
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-/** Human-friendly one-time setup token, grouped for readability. */
-export function setupToken(): string {
-  const raw = randomToken(24);
-  return raw.match(/.{1,6}/g)?.join('-') ?? raw;
-}
-
 /** Next customer code from a numeric sequence, e.g. 1 -> "KD-0001". */
 export function formatCustomerCode(n: number, prefix = 'KD', digits = 4): string {
   return `${prefix}-${String(n).padStart(digits, '0')}`;

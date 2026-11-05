@@ -2,9 +2,8 @@
  * Setup gate.
  *
  * Fresh deploy => SETUP_REQUIRED: the whole app is inert except /api/setup/*.
- * Nothing is hardcoded — on first contact the system generates a one-time
- * setup token, stores ONLY its SHA-256 hash, and logs the raw token once so
- * the operator can retrieve it via `wrangler tail`. After setup completes the
+ * No setup secret: the first user to submit the owner form becomes OWNER
+ * (see setup-service claimSetup). After setup completes the
  * state flips to ACTIVE and /api/setup/* is closed.
  */
 import type { MiddlewareHandler } from 'hono';

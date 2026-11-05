@@ -131,7 +131,6 @@ export const serviceTemplateSchema = z.object({
 
 // ---- Setup wizard ----
 export const setupStep1Schema = z.object({
-  setup_token: z.string().min(1),
   owner_name: z.string().min(1),
   owner_email: z.string().email(),
   recovery_email: z.string().email().optional().or(z.literal('')),

@@ -1,18 +1,17 @@
 /**
  * Setup lifecycle.
  *
- * Nothing is hardcoded — not even the bootstrap token. On first contact the
- * system generates a one-time setup token, stores ONLY its SHA-256 hash in
- * setup_state, and logs the raw token exactly once. The operator retrieves it
- * from the Worker log (`wrangler tail`) or the deploy output and enters it in
- * the /setup wizard. The raw token is never persisted and never returned by
- * any API.
+ * No setup secret: the FIRST person to submit the owner form becomes OWNER.
+ * At that moment a random "setup claim" is issued to that browser as an
+ * HttpOnly cookie (only its SHA-256 hash is stored in setup_state), so the
+ * remaining wizard steps can't be hijacked and no second owner can be created
+ * while setup is in progress. Completing setup clears the claim and closes
+ * /api/setup for good.
  */
 import type { Env } from '../config/env';
 import { one, run } from '../db/client';
 import { sha256Hex, timingSafeEqual } from '../lib/crypto';
-import { setupToken } from '../lib/ids';
-import { AppError } from '../lib/errors';
+import { randomToken } from '../lib/ids';
 import { audit } from './audit-service';
 
 export interface SetupStateRow {
@@ -29,53 +28,45 @@ export async function getSetupRow(db: D1Database): Promise<SetupStateRow | null>
   return one<SetupStateRow>(db, `SELECT * FROM setup_state WHERE id = 1`);
 }
 
-/**
- * Ensure a setup_state row exists. On the very first call, generate the
- * one-time token and log it once. Returns the current lifecycle state.
- */
+/** Ensure a setup_state row exists. Returns the current lifecycle state. */
 export async function ensureSetupState(
   env: Env,
-  ctx?: { waitUntil(p: Promise<unknown>): void },
+  _ctx?: { waitUntil(p: Promise<unknown>): void },
 ): Promise<SetupStateRow['state']> {
   const existing = await getSetupRow(env.DB);
   if (existing) return existing.state;
-
-  const raw = setupToken();
-  const hash = await sha256Hex(raw);
-  await run(
-    env.DB,
-    `INSERT INTO setup_state (id, state, setup_token_hash, setup_token_created_at)
-     VALUES (1, 'SETUP_REQUIRED', ?1, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
-    hash,
-  );
-
-  // Log the raw token exactly once. This is the ONLY time it is available.
-  const banner =
-    `\n============================================================\n` +
-    ` X-RECHNUNG FIRST-RUN SETUP TOKEN (shown once):\n\n   ${raw}\n\n` +
-    ` Open the app and go to /setup, then paste this token.\n` +
-    `============================================================\n`;
-  const logPromise = Promise.resolve().then(() => console.log(banner));
-  if (ctx) ctx.waitUntil(logPromise);
-  else await logPromise;
-
+  await run(env.DB, `INSERT OR IGNORE INTO setup_state (id, state) VALUES (1, 'SETUP_REQUIRED')`);
   await audit(env.DB, { entityType: 'setup', eventType: 'INITIAL_SETUP_STARTED' });
-  return 'SETUP_REQUIRED';
+  return (await getSetupRow(env.DB))?.state ?? 'SETUP_REQUIRED';
 }
 
-/** Verify a submitted setup token against the stored hash (constant time). */
-export async function verifySetupToken(db: D1Database, token: string): Promise<boolean> {
+/**
+ * Atomically claim setup for the first caller. Returns the raw claim value to
+ * hand to the browser, or null if someone already claimed it.
+ */
+export async function claimSetup(db: D1Database): Promise<string | null> {
+  const raw = randomToken(32);
+  const hash = await sha256Hex(raw);
+  const res = await db
+    .prepare(
+      `UPDATE setup_state
+          SET setup_token_hash = ?1,
+              setup_token_created_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+              state = 'IN_PROGRESS',
+              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+        WHERE id = 1 AND setup_token_hash IS NULL AND state = 'SETUP_REQUIRED'`,
+    )
+    .bind(hash)
+    .run();
+  return (res.meta.changes ?? 0) === 1 ? raw : null;
+}
+
+/** Does this claim value belong to the browser that started setup? */
+export async function verifySetupClaim(db: D1Database, claim: string | undefined): Promise<boolean> {
+  if (!claim) return false;
   const row = await getSetupRow(db);
   if (!row || !row.setup_token_hash) return false;
-  if (row.setup_attempts >= MAX_SETUP_ATTEMPTS) {
-    throw new AppError('RATE_LIMITED', 'setup attempts exhausted');
-  }
-  const hash = await sha256Hex(token);
-  const okToken = timingSafeEqual(hash, row.setup_token_hash);
-  if (!okToken) {
-    await run(db, `UPDATE setup_state SET setup_attempts = setup_attempts + 1 WHERE id = 1`);
-  }
-  return okToken;
+  return timingSafeEqual(await sha256Hex(claim), row.setup_token_hash);
 }
 
 export async function markInProgress(db: D1Database): Promise<void> {

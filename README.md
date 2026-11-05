@@ -21,8 +21,7 @@ Archivieren von Rechnungen.
 - **E‑Rechnung Eingang**: XRechnung (UBL/CII), ZUGFeRD/Factur‑X, Upload + Email‑Worker.
 - **Alles konfigurierbar im Panel** — nichts Geschäftliches ist hardcodiert
   (Owner‑Email, Domains, Steuernummern, Texte, Validator‑URL …).
-- **Kein Bootstrap‑Secret hardcodiert**: der Setup‑Token wird beim ersten Start
-  generiert und einmalig ins Log geschrieben.
+- **Kein Setup‑Secret**: wer `/setup` als Erster abschließt, wird Owner (Admin).
 
 ## Architektur
 
@@ -93,15 +92,12 @@ Siehe [ARCHITECTURE.md](./ARCHITECTURE.md). Kurzform:
 
 ### Erstinbetriebnahme ohne Owner
 
-Beim allerersten Aufruf ist der Zustand `SETUP_REQUIRED`. Der einmalige
-Setup‑Token steht **nur im Log**:
+Beim allerersten Aufruf ist der Zustand `SETUP_REQUIRED`. Es gibt keinen
+Setup‑Token: **wer das Owner‑Formular als Erster absendet, wird Owner**. Dieser
+Browser erhält ein HttpOnly‑Cookie, ohne das die weiteren Setup‑Schritte nicht
+möglich sind. Setup daher direkt nach dem ersten Deploy abschließen.
 
-```bash
-npx wrangler tail
-# => "X-RECHNUNG FIRST-RUN SETUP TOKEN (shown once): ...."
-```
-
-App auf der `workers.dev`‑Adresse öffnen → `/setup` → Token eingeben →
+App auf der `workers.dev`‑Adresse öffnen → `/setup` →
 Owner‑Email, Cloudflare‑Account/Zone, Scoped API‑Token (nur transient) und Domain
 angeben. Danach ist `/setup` geschlossen.
 

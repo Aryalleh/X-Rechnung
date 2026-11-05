@@ -25,17 +25,12 @@ paths:
       tags: [system]
       summary: Public bootstrap info (setup state, app name, locale)
       responses: { '200': { description: OK } }
-  /setup/verify-token:
-    post:
-      tags: [setup]
-      summary: Verify the one-time setup token
-      responses: { '200': { description: verified }, '401': { description: invalid } }
   /setup/owner:
-    post: { tags: [setup], summary: Create the OWNER + localization, responses: { '200': { description: OK } } }
+    post: { tags: [setup], summary: First caller claims setup (HttpOnly claim cookie) and becomes OWNER, responses: { '200': { description: OK }, '409': { description: already claimed } } }
   /setup/cloudflare:
     post: { tags: [setup], summary: Connect Cloudflare, create Access app/policy + custom domain, responses: { '200': { description: OK } } }
   /setup/complete:
-    post: { tags: [setup], summary: Finalize setup (invalidate token), responses: { '200': { description: OK } } }
+    post: { tags: [setup], summary: Finalize setup (clear claim, close /setup), responses: { '200': { description: OK } } }
   /customers:
     get: { tags: [customers], summary: List/search customers, responses: { '200': { description: OK } } }
     post: { tags: [customers], summary: Create a customer, responses: { '201': { description: created }, '409': { description: code taken } } }

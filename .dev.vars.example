@@ -17,8 +17,8 @@
 #
 # If omitted, the app still boots and the full invoice workflow works, but
 # encrypted-at-rest secret storage is DISABLED and System Status reports the
-# secret store as NOT_CONFIGURED. Nothing else is hardcoded — the first-run
-# setup token is generated at runtime and printed to the Worker log.
+# secret store as NOT_CONFIGURED. Nothing else is hardcoded — there is no
+# setup secret; the first user to complete /setup becomes OWNER.
 DATA_ENCRYPTION_KEY=
 
 # Deployment environment marker only (not business config).

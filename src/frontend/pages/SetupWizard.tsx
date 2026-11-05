@@ -5,29 +5,23 @@ import { api } from '../api';
  * and (optionally) Cloudflare Access/domain are all entered here. */
 export function SetupWizard({ onDone }: { onDone: () => void }) {
   const [step, setStep] = useState(1);
-  const [token, setToken] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const [owner, setOwner] = useState({ owner_name: '', owner_email: '', recovery_email: '', locale: 'fa', timezone: 'Europe/Berlin', invoice_mode: 'both' });
-  const [cf, setCf] = useState({ account_id: '', zone_id: '', zone_name: '', worker_script_name: 'x-rechnung', api_token: '', app_domain: '' });
+  const [cf, setCf] = useState({ account_id: '', zone_id: '', zone_name: '', worker_script_name: 'invoice', api_token: '', app_domain: '' });
 
-  async function verify() {
-    setErr(null);
-    try { await api.post('/setup/verify-token', { setup_token: token }); setStep(2); }
-    catch (e) { setErr((e as Error).message); }
-  }
   async function saveOwner() {
     setErr(null);
-    try { await api.post('/setup/owner', { setup_token: token, ...owner }); setStep(3); }
+    try { await api.post('/setup/owner', owner); setStep(2); }
     catch (e) { setErr((e as Error).message); }
   }
   async function connectCf() {
     setErr(null);
-    try { await api.post('/setup/cloudflare', { setup_token: token, owner_email: owner.owner_email, ...cf }); setStep(4); }
+    try { await api.post('/setup/cloudflare', { owner_email: owner.owner_email, ...cf }); setStep(3); }
     catch (e) { setErr((e as Error).message); }
   }
   async function complete() {
     setErr(null);
-    try { await api.post('/setup/complete', { setup_token: token, owner_email: owner.owner_email }); onDone(); }
+    try { await api.post('/setup/complete', { owner_email: owner.owner_email }); onDone(); }
     catch (e) { setErr((e as Error).message); }
   }
 
@@ -35,22 +29,10 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
     <div className="flex min-h-screen items-center justify-center bg-gray-50 p-4 dark:bg-gray-950">
       <div className="card w-full max-w-xl">
         <h1 className="mb-1 text-xl font-bold">راه‌اندازی اولیه X-Rechnung</h1>
-        <p className="mb-4 text-sm text-gray-500">مرحله {step} از ۴</p>
+        <p className="mb-4 text-sm text-gray-500">مرحله {step} از ۳</p>
         {err && <div className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div>}
 
         {step === 1 && (
-          <div className="space-y-3">
-            <p className="text-sm text-gray-600 dark:text-gray-300">
-              کد راه‌اندازی یک‌بارمصرف در لاگ Worker چاپ شده است. آن را با
-              <code className="mx-1 rounded bg-gray-100 px-1 dark:bg-gray-800">wrangler tail</code>
-              مشاهده و اینجا وارد کنید.
-            </p>
-            <div><label className="label">Setup Token</label><input className="input" value={token} onChange={(e) => setToken(e.target.value)} /></div>
-            <button className="btn-primary" onClick={verify}>تأیید کد</button>
-          </div>
-        )}
-
-        {step === 2 && (
           <div className="space-y-3">
             <div><label className="label">نام مالک</label><input className="input" value={owner.owner_name} onChange={(e) => setOwner({ ...owner, owner_name: e.target.value })} /></div>
             <div><label className="label">ایمیل مالک (Owner Email)</label><input className="input" dir="ltr" value={owner.owner_email} onChange={(e) => setOwner({ ...owner, owner_email: e.target.value })} /></div>
@@ -66,11 +48,12 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
                 این فقط پیش‌فرض‌ها و گزینه‌های نمایش را تعیین می‌کند؛ بعداً از تنظیمات قابل تغییر است.
               </p>
             </div>
+            <p className="text-xs text-gray-500">اولین کسی که این فرم را ثبت کند، مدیر (Owner) سیستم می‌شود.</p>
             <button className="btn-primary" onClick={saveOwner}>ذخیره و ادامه</button>
           </div>
         )}
 
-        {step === 3 && (
+        {step === 2 && (
           <div className="space-y-3">
             <p className="text-sm text-gray-600 dark:text-gray-300">
               اتصال Cloudflare Access و دامنه. توکن فقط در همین مرحله استفاده و ذخیره نمی‌شود.
@@ -83,15 +66,15 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
             ))}
             <div className="flex gap-2">
               <button className="btn-primary" onClick={connectCf}>ساخت Access و دامنه</button>
-              <button className="btn-ghost" onClick={() => setStep(4)}>فعلاً رد شو</button>
+              <button className="btn-ghost" onClick={() => setStep(3)}>فعلاً رد شو</button>
             </div>
           </div>
         )}
 
-        {step === 4 && (
+        {step === 3 && (
           <div className="space-y-3">
             <p className="text-sm text-gray-600 dark:text-gray-300">
-              راه‌اندازی تقریباً کامل است. پس از تأیید، مسیر <code>/setup</code> بسته و کد راه‌اندازی باطل می‌شود.
+              راه‌اندازی تقریباً کامل است. پس از تأیید، مسیر <code>/setup</code> برای همیشه بسته می‌شود.
             </p>
             <button className="btn-primary" onClick={complete}>تکمیل راه‌اندازی</button>
           </div>

@@ -1,10 +1,13 @@
 /**
  * Setup wizard API. Guarded by the setup gate (only reachable while state is
- * SETUP_REQUIRED / IN_PROGRESS) and by a hard rate limit + persistent attempts
- * counter. Nothing is hardcoded — the owner, domain, Access app and email
+ * SETUP_REQUIRED / IN_PROGRESS) and a rate limit. No setup secret: the first
+ * person to submit the owner form becomes OWNER and receives an HttpOnly
+ * setup-claim cookie that the remaining steps require. Nothing is hardcoded — the owner, domain, Access app and email
  * routing are all created here from operator input.
  */
 import { Hono } from 'hono';
+import type { Context } from 'hono';
+import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import type { HonoEnv } from '../http-types';
 import { z } from 'zod';
 import { ok } from '../lib/response';
@@ -12,8 +15,8 @@ import { AppError } from '../lib/errors';
 import { parseBody } from '../lib/validate-request';
 import { rateLimit } from '../middleware/rate-limit';
 import { setupStep1Schema } from '../lib/schemas';
-import { verifySetupToken, markInProgress, completeSetup, getSetupRow } from '../services/setup-service';
-import { createAdmin, countActiveOwners } from '../db/repositories/admin-repo';
+import { claimSetup, verifySetupClaim, completeSetup, getSetupRow } from '../services/setup-service';
+import { createAdmin, countActiveOwners, findAdminByEmail } from '../db/repositories/admin-repo';
 import { setSetting } from '../db/repositories/settings-repo';
 import { upsertIntegration } from '../db/repositories/cloudflare-repo';
 import { audit } from '../services/audit-service';
@@ -23,24 +26,42 @@ export const setupRoutes = new Hono<HonoEnv>();
 
 setupRoutes.use('*', rateLimit({ key: 'setup', limit: 20, windowMs: 60_000 }));
 
-/** Step 0: verify the one-time setup token. */
-setupRoutes.post('/verify-token', async (c) => {
-  const { setup_token } = await parseBody(c, z.object({ setup_token: z.string().min(1) }));
-  const valid = await verifySetupToken(c.env.DB, setup_token);
-  if (!valid) throw new AppError('UNAUTHORIZED', 'invalid setup token');
-  await markInProgress(c.env.DB);
-  return ok(c, { verified: true });
-});
+const CLAIM_COOKIE = 'xr_setup_claim';
 
-/** Step 1: owner account + localization. Requires a valid token again. */
+async function requireClaim(c: Context<HonoEnv>): Promise<void> {
+  if (!(await verifySetupClaim(c.env.DB, getCookie(c, CLAIM_COOKIE)))) {
+    throw new AppError('FORBIDDEN', 'setup was started from another browser');
+  }
+}
+
+/**
+ * Step 1: owner account + localization. The first caller claims setup and
+ * becomes OWNER; the same browser may resubmit (e.g. to fix a typo).
+ */
 setupRoutes.post('/owner', async (c) => {
   const body = await parseBody(c, setupStep1Schema);
-  if (!(await verifySetupToken(c.env.DB, body.setup_token))) throw new AppError('UNAUTHORIZED', 'invalid setup token');
+  const alreadyMine = await verifySetupClaim(c.env.DB, getCookie(c, CLAIM_COOKIE));
+  if (!alreadyMine) {
+    if ((await countActiveOwners(c.env.DB)) > 0) throw new AppError('CONFLICT', 'owner already exists');
+    const claim = await claimSetup(c.env.DB);
+    if (!claim) throw new AppError('CONFLICT', 'setup already claimed by another user');
+    setCookie(c, CLAIM_COOKIE, claim, {
+      httpOnly: true,
+      secure: new URL(c.req.url).protocol === 'https:',
+      sameSite: 'Strict',
+      path: '/api/setup',
+      maxAge: 60 * 60 * 24,
+    });
+  }
   if (body.recovery_email && body.recovery_email === body.owner_email) {
     // allowed only with explicit confirm flag (kept simple: reject here)
     throw new AppError('VALIDATION_ERROR', 'recovery email must differ from owner email', { recovery_email: 'ایمیل بازیابی باید متفاوت باشد' });
   }
-  const owner = await createAdmin(c.env.DB, {
+  const existingOwner = alreadyMine ? await findAdminByEmail(c.env.DB, body.owner_email) : null;
+  if (alreadyMine && !existingOwner && (await countActiveOwners(c.env.DB)) > 0) {
+    throw new AppError('CONFLICT', 'owner already created; use the same email');
+  }
+  const owner = existingOwner ?? await createAdmin(c.env.DB, {
     email: body.owner_email,
     full_name: body.owner_name,
     ...(body.recovery_email ? { recovery_email: body.recovery_email } : {}),
@@ -67,7 +88,6 @@ setupRoutes.post('/owner', async (c) => {
 
 /** Step 2: connect Cloudflare + create Access application/policy + custom domain. */
 const cfSchema = z.object({
-  setup_token: z.string().min(1),
   account_id: z.string().min(1),
   zone_id: z.string().min(1),
   zone_name: z.string().min(1),
@@ -78,8 +98,8 @@ const cfSchema = z.object({
 });
 
 setupRoutes.post('/cloudflare', async (c) => {
+  await requireClaim(c);
   const body = await parseBody(c, cfSchema);
-  if (!(await verifySetupToken(c.env.DB, body.setup_token))) throw new AppError('UNAUTHORIZED', 'invalid setup token');
 
   // The token is used only within this request and never persisted here.
   const verify = await cfApi.verifyToken(body.api_token);
@@ -115,11 +135,12 @@ setupRoutes.post('/cloudflare', async (c) => {
 
 /** Step 3: finalize. Requires an active owner to exist. */
 setupRoutes.post('/complete', async (c) => {
-  const body = await parseBody(c, z.object({ setup_token: z.string().min(1), owner_email: z.string().email() }));
-  if (!(await verifySetupToken(c.env.DB, body.setup_token))) throw new AppError('UNAUTHORIZED', 'invalid setup token');
+  await requireClaim(c);
+  const body = await parseBody(c, z.object({ owner_email: z.string().email() }));
   const owners = await countActiveOwners(c.env.DB);
   if (owners < 1) throw new AppError('CONFLICT', 'no owner configured');
   await completeSetup(c.env, body.owner_email);
+  deleteCookie(c, CLAIM_COOKIE, { path: '/api/setup' });
   return ok(c, { state: 'ACTIVE' });
 });
 
