@@ -15,6 +15,8 @@ export type Lang = 'fa' | 'de' | 'en';
 export type InstallMode = 'fa' | 'de' | 'both';
 
 const fa = {
+  'ni.seller_missing': 'مشخصات صادرکننده (نام، نشانی، کد ملی) هنوز ثبت نشده است؛ پیش‌نویس ذخیره می‌شود ولی صدور فاکتور ممکن نیست.',
+  'ni.go_settings': 'تکمیل در تنظیمات',
   'cust.sec_iran': "شناسه‌های مالیاتی ایران",
   'f.national_id': "کد ملی / شناسه ملی",
   'f.economic_code': "کد اقتصادی",
@@ -391,6 +393,8 @@ export type MsgKey = keyof typeof fa;
 type Dict = Record<MsgKey, string>;
 
 const de: Dict = {
+  'ni.seller_missing': 'Ihre Rechnungsstellerdaten fehlen noch. Entwürfe können gespeichert, aber nicht ausgestellt werden.',
+  'ni.go_settings': 'In Einstellungen ergänzen',
   'cust.sec_iran': "Iranische Steuer-IDs",
   'f.national_id': "Nationale ID (Iran)",
   'f.economic_code': "Wirtschaftscode (Iran)",
@@ -751,6 +755,8 @@ const de: Dict = {
 };
 
 const en: Dict = {
+  'ni.seller_missing': 'Your issuer details are not set up yet. Drafts can be saved but not issued.',
+  'ni.go_settings': 'Complete in Settings',
   'cust.sec_iran': "Iranian tax IDs",
   'f.national_id': "National ID (Iran)",
   'f.economic_code': "Economic code (Iran)",

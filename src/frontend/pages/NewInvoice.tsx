@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import { errorText, useI18n } from '../i18n';
 import type { Lang, MsgKey } from '../i18n';
@@ -41,17 +41,23 @@ export function NewInvoice() {
   const [taxRate, setTaxRate] = useState('');
   const [sellerTax, setSellerTax] = useState<{ status: string; rateBp: number }>({ status: 'MICRO', rateBp: 1000 });
   const [iranType, setIranType] = useState<1 | 2>(1);
+  const [sellerMissing, setSellerMissing] = useState(false);
   const [advance, setAdvance] = useState(0);
   const [installments, setInstallments] = useState<{ key: number; due_date: string; amount_cents: number }[]>([]);
   const [invoiceId, setInvoiceId] = useState<string | null>(null);
   const [busy, setBusy] = useState<'draft' | 'issue' | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [errCode, setErrCode] = useState<string | null>(null);
+  const fail = (e: unknown) => { setErr(errorText(e, i18n)); setErrCode((e as { code?: string }).code ?? null); };
   const focusKey = useRef<number | null>(null);
 
   useEffect(() => {
     api.get<Template[]>('/templates?active=1').then(setTemplates).catch(() => {});
     api.get<{ iran_tax_status?: string; iran_vat_rate_bp?: number } | null>('/settings/seller')
-      .then((s) => s && setSellerTax({ status: s.iran_tax_status ?? 'MICRO', rateBp: s.iran_vat_rate_bp ?? 1000 })).catch(() => {});
+      .then((s) => {
+        setSellerMissing(!s);
+        if (s) setSellerTax({ status: s.iran_tax_status ?? 'MICRO', rateBp: s.iran_vat_rate_bp ?? 1000 });
+      }).catch(() => {});
     api.get<{ currency: string; invoice_language: string }>('/settings/general').then((g) => {
       if (g.currency) setCurrency(g.currency);
       if (g.invoice_language === 'fa' || g.invoice_language === 'de' || g.invoice_language === 'en') setLanguage(g.invoice_language);
@@ -109,7 +115,7 @@ export function NewInvoice() {
       });
       setTemplates((p) => [...p, tpl]);
       toast(t('ni.template_saved'));
-    } catch (e) { setErr(errorText(e, i18n)); }
+    } catch (e) { fail(e); }
   }
 
   function buildBody() {
@@ -148,7 +154,7 @@ export function NewInvoice() {
 
   async function saveDraft() {
     setBusy('draft');
-    try { if (await persist()) toast(t('ni.draft_saved')); } catch (e) { setErr(errorText(e, i18n)); } finally { setBusy(null); }
+    try { if (await persist()) toast(t('ni.draft_saved')); } catch (e) { fail(e); } finally { setBusy(null); }
   }
   async function issue() {
     setBusy('issue');
@@ -158,13 +164,18 @@ export function NewInvoice() {
       await api.post(`/invoices/${id}/issue`);
       toast(t('det.issued'));
       nav(`/invoices/${id}`);
-    } catch (e) { setErr(errorText(e, i18n)); } finally { setBusy(null); }
+    } catch (e) { fail(e); } finally { setBusy(null); }
   }
 
   return (
     <div className="pb-28">
       <PageHeader title={t('ni.title')} subtitle={t('ni.subtitle')} />
-      {err && <Alert tone="danger" onClose={() => setErr(null)}>{err}</Alert>}
+      {sellerMissing && (
+        <Alert tone="warning">{t('ni.seller_missing')} <Link to="/settings" className="font-semibold underline">{t('ni.go_settings')}</Link></Alert>
+      )}
+      {err && <Alert tone="danger" onClose={() => { setErr(null); setErrCode(null); }}>{err}
+        {errCode === 'SELLER_INCOMPLETE' && <> <Link to="/settings" className="font-semibold underline">{t('ni.go_settings')}</Link></>}
+      </Alert>}
 
       <div className="grid gap-5 lg:grid-cols-3">
         <div className="space-y-5 lg:col-span-2">

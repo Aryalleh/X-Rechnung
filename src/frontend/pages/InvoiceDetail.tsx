@@ -21,6 +21,8 @@ export function InvoiceDetail() {
   const toast = useToast();
   const [d, setD] = useState<Detail | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [errCode, setErrCode] = useState<string | null>(null);
+  const fail = (e: unknown) => { setErr(errorText(e, i18n)); setErrCode((e as { code?: string }).code ?? null); };
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmStorno, setConfirmStorno] = useState(false);
   const [pay, setPay] = useState({ payment_date: new Date().toISOString().slice(0, 10), amount_cents: 0, payment_method: 'BANK_TRANSFER' });
@@ -29,7 +31,7 @@ export function InvoiceDetail() {
   const load = () => api.get<Detail>(`/invoices/${id}`).then((data) => {
     setD(data);
     setPay((p) => ({ ...p, amount_cents: data.payments.remainingCents }));
-  }).catch((e) => setErr(errorText(e, i18n)));
+  }).catch((e) => fail(e));
   const loadDocs = () => api.get<{ id: string; document_role: string }[]>(`/documents/for/invoice/${id}`)
     .then((docs) => setPdfDoc(docs.find((x) => x.document_role === 'pdf')?.id ?? null)).catch(() => {});
 
@@ -38,7 +40,7 @@ export function InvoiceDetail() {
 
   async function act(name: string, fn: () => Promise<unknown>, okMsg?: string) {
     setErr(null); setBusy(name);
-    try { await fn(); if (okMsg) toast(okMsg); await load(); await loadDocs(); } catch (e) { setErr(errorText(e, i18n)); } finally { setBusy(null); }
+    try { await fn(); if (okMsg) toast(okMsg); await load(); await loadDocs(); } catch (e) { fail(e); } finally { setBusy(null); }
   }
 
   if (!d) return err ? <Alert tone="danger">{err}</Alert> : <Loading />;
@@ -68,7 +70,9 @@ export function InvoiceDetail() {
           {isDraft && <button className="btn-primary" disabled={!!busy} onClick={() => act('issue', () => api.post(`/invoices/${id}/issue`), t('det.issued'))}>{busy === 'issue' ? <Spinner /> : <Icon name="check" />}{t('ni.issue')}</button>}
         </div>
       </div>
-      {err && <Alert tone="danger" onClose={() => setErr(null)}>{err}</Alert>}
+      {err && <Alert tone="danger" onClose={() => { setErr(null); setErrCode(null); }}>{err}
+        {errCode === 'SELLER_INCOMPLETE' && <> <Link to="/settings" className="font-semibold underline">{t('ni.go_settings')}</Link></>}
+      </Alert>}
 
       <div className="grid gap-5 lg:grid-cols-3">
         <div className="space-y-5 lg:col-span-2">

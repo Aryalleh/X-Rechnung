@@ -67,7 +67,7 @@ invoiceRoutes.get('/:id/preview', async (c) => {
   if (!invoice) throw new AppError('NOT_FOUND');
   const items = await getItems(c.env.DB, invoice.id);
   const seller = await getActiveSeller(c.env.DB);
-  if (!seller) throw new AppError('SELLER_INCOMPLETE');
+  if (!seller) return c.html(sellerMissingPage(invoice.invoice_language), 422);
   const customer = invoice.customer_id ? await getCustomerById(c.env.DB, invoice.customer_id) : null;
   const settings = await getInvoiceSettings(c.env.DB);
   const { invoiceDate, dueDate } = await resolveDates(c.env.DB, invoice);
@@ -170,3 +170,18 @@ invoiceRoutes.post('/:id/ready', async (c) => {
   await setStatus(c.env.DB, invoice.id, 'READY_TO_ISSUE');
   return ok(c, { status: 'READY_TO_ISSUE' });
 });
+
+/** Shown in the preview tab when no issuer profile exists yet. */
+function sellerMissingPage(language: string): string {
+  const lang = language === 'fa' ? 'fa' : language === 'en' ? 'en' : 'de';
+  const m = {
+    fa: { title: 'مشخصات صادرکننده ثبت نشده است', body: 'برای پیش‌نمایش و صدور فاکتور، ابتدا نام، نشانی و کد ملی / شناسه مالیاتی خود را در تنظیمات وارد کنید.', link: 'رفتن به تنظیمات' },
+    de: { title: 'Rechnungsstellerdaten fehlen', body: 'Bitte zuerst Name, Adresse und Steuer-ID unter Einstellungen hinterlegen, um Rechnungen anzuzeigen und auszustellen.', link: 'Zu den Einstellungen' },
+    en: { title: 'Issuer details missing', body: 'Enter your name, address and tax ID in Settings before previewing or issuing invoices.', link: 'Go to Settings' },
+  }[lang];
+  return `<!doctype html><html lang="${lang}" dir="${lang === 'fa' ? 'rtl' : 'ltr'}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${m.title}</title>
+<style>body{font-family:system-ui,Tahoma,sans-serif;background:#f8fafc;color:#0f172a;display:grid;place-items:center;min-height:100vh;margin:0;padding:16px}
+.c{max-width:28rem;background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:24px}h1{font-size:1.15rem;margin:0 0 8px}p{color:#475569;line-height:1.7}
+a{display:inline-block;margin-top:8px;background:#4f46e5;color:#fff;text-decoration:none;padding:10px 16px;border-radius:8px}</style></head>
+<body><div class="c"><h1>${m.title}</h1><p>${m.body}</p><a href="/settings">${m.link}</a></div></body></html>`;
+}
