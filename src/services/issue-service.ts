@@ -16,13 +16,14 @@
  *  11. Audit.
  */
 import type { Env } from '../config/env';
-import { getInvoice, getItems, markIssuing, markIssued, setStatus } from '../db/repositories/invoice-repo';
+import { getInvoice, getItems, markIssuing, markIssued, setStatus, getInstallments } from '../db/repositories/invoice-repo';
 import { getActiveSeller } from '../db/repositories/seller-repo';
 import { getCustomerById } from '../db/repositories/customer-repo';
+import { insertPayment } from '../db/repositories/payment-repo';
 import { assertSellerIssuable, snapshotSeller } from './seller-service';
 import { snapshotCustomer } from './customer-service';
 import { assertReadyToIssue, resolveDates } from './invoice-service';
-import { computeTotals } from '../lib/money';
+import { computeDocumentTotals } from '../lib/money';
 import { canonicalJson, sha256Hex } from '../lib/crypto';
 import { yearOf } from '../lib/format';
 import { reserveNumber, confirmNumber, voidNumber } from './sequence-service';
@@ -76,10 +77,16 @@ export async function issueInvoice(
   const customer = await getCustomerById(db, invoice.customer_id!);
   if (!customer) throw new AppError('CUSTOMER_NOT_FOUND');
 
-  // Backend-authoritative recomputation.
-  const totals = computeTotals(
-    items.map((it) => ({ quantity: it.quantity_decimal, unitPriceCents: it.unit_price_cents, discountCents: it.discount_cents })),
-  );
+  // Backend-authoritative recomputation including document discount / VAT /
+  // advance payment (never trust stored or frontend totals).
+  const doc = computeDocumentTotals({
+    lines: items.map((it) => ({ quantity: it.quantity_decimal, unitPriceCents: it.unit_price_cents, discountCents: it.discount_cents })),
+    discountMode: invoice.discount_mode,
+    discountValue: invoice.discount_value,
+    taxRateBp: invoice.tax_scenario === 'KLEINUNTERNEHMER_DE' ? 0 : invoice.tax_rate_bp,
+    advancePaidCents: invoice.advance_paid_cents,
+  });
+  const installments = await getInstallments(db, invoiceId);
 
   const settings = await getInvoiceSettings(db);
   const { invoiceDate, dueDate } = await resolveDates(db, invoice);
@@ -114,8 +121,14 @@ export async function issueInvoice(
       line_total_cents: it.line_total_cents,
       rights_text: it.rights_text,
     })),
-    subtotal_cents: totals.subtotalCents,
-    total_cents: totals.totalCents,
+    subtotal_cents: doc.lineSubtotalCents,
+    discount_cents: doc.discountCents,
+    tax_rate_bp: invoice.tax_scenario === 'KLEINUNTERNEHMER_DE' ? 0 : invoice.tax_rate_bp,
+    tax_amount_cents: doc.taxCents,
+    total_cents: doc.totalCents,
+    advance_paid_cents: doc.advancePaidCents,
+    amount_due_cents: doc.amountDueCents,
+    installments: installments.map((i) => ({ label: i.label, due_date: i.due_date, amount_cents: i.amount_cents })),
     tax_exemption_text: taxText,
   };
   const canonicalString = canonicalJson(canonical);
@@ -181,14 +194,22 @@ export async function issueInvoice(
         lineTotalCents: it.line_total_cents,
         rightsText: it.rights_text,
       })),
-      totalCents: totals.totalCents,
-      subtotalCents: totals.subtotalCents,
+      subtotalCents: doc.lineSubtotalCents,
+      discountCents: doc.discountCents,
+      netCents: doc.netCents,
+      taxRateBp: invoice.tax_scenario === 'KLEINUNTERNEHMER_DE' ? 0 : invoice.tax_rate_bp,
+      taxCents: doc.taxCents,
+      totalCents: doc.totalCents,
+      advancePaidCents: doc.advancePaidCents,
+      amountDueCents: doc.amountDueCents,
+      installments: installments.map((i) => ({ label: i.label, dueDate: i.due_date, amountCents: i.amount_cents, paid: i.paid === 1 })),
       taxExemptionText: taxText,
       paymentTermsText: settings.payment_terms_text,
       thanksText: settings.thanks_text,
       showBank: settings.show_bank,
       accentColor: settings.accent_color,
       brandHeading: settings.brand_heading ?? undefined,
+      customFont: settings.custom_font ?? undefined,
       draft: false,
     });
 
@@ -213,11 +234,21 @@ export async function issueInvoice(
 
     // Finalize: assign number + ISSUED, then confirm the reservation.
     await markIssued(db, invoiceId, alloc.formatted);
+    // Record a prepaid advance (Anzahlung) as a real payment so balance tracking
+    // and the payment list stay consistent with what the PDF shows.
+    if (doc.advancePaidCents > 0) {
+      await insertPayment(db, {
+        invoice_id: invoiceId, payment_date: invoiceDate, amount_cents: doc.advancePaidCents,
+        payment_method: 'OTHER', bank_reference: null, note: 'advance / Anzahlung / پیش‌پرداخت',
+      });
+      if (doc.amountDueCents <= 0) await setStatus(db, invoiceId, 'PAID');
+      else await setStatus(db, invoiceId, 'PARTIALLY_PAID');
+    }
     await confirmNumber(env, prefix, year, alloc.sequence);
     await audit(db, {
       entityType: 'invoice', entityId: invoiceId, eventType: 'INVOICE_ISSUED', actorEmail,
       newValue: { number: alloc.formatted, hash: contentHash },
-      metadata: { total_cents: totals.totalCents },
+      metadata: { total_cents: doc.totalCents },
     });
 
     return { invoiceId, invoiceNumber: alloc.formatted, pdfDocumentId: stored.documentId, contentHash };

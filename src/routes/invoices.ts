@@ -7,7 +7,7 @@ import { parseBody } from '../lib/validate-request';
 import { invoiceDraftSchema } from '../lib/schemas';
 import { rateLimit } from '../middleware/rate-limit';
 import {
-  getInvoice, getItems, listInvoices, deleteDraft, setStatus, getRelations,
+  getInvoice, getItems, listInvoices, deleteDraft, setStatus, getRelations, getInstallments, markInstallmentPaid,
 } from '../db/repositories/invoice-repo';
 import { getActiveSeller } from '../db/repositories/seller-repo';
 import { getCustomerById } from '../db/repositories/customer-repo';
@@ -36,7 +36,8 @@ invoiceRoutes.get('/:id', async (c) => {
   const items = await getItems(c.env.DB, invoice.id);
   const payments = await getPaymentSummary(c.env.DB, invoice.id);
   const relations = await getRelations(c.env.DB, invoice.id);
-  return ok(c, { invoice, items, payments, relations });
+  const installments = await getInstallments(c.env.DB, invoice.id);
+  return ok(c, { invoice, items, payments, relations, installments });
 });
 
 invoiceRoutes.post('/', async (c) => {
@@ -95,12 +96,20 @@ invoiceRoutes.get('/:id/preview', async (c) => {
     })),
     totalCents: invoice.total_cents,
     subtotalCents: invoice.subtotal_cents,
+    discountCents: invoice.global_discount_cents,
+    netCents: invoice.subtotal_cents - invoice.global_discount_cents,
+    taxRateBp: invoice.tax_scenario === 'KLEINUNTERNEHMER_DE' ? 0 : invoice.tax_rate_bp,
+    taxCents: invoice.tax_amount_cents,
+    advancePaidCents: invoice.advance_paid_cents,
+    amountDueCents: invoice.amount_due_cents || invoice.total_cents,
+    installments: (await getInstallments(c.env.DB, invoice.id)).map((i) => ({ label: i.label, dueDate: i.due_date, amountCents: i.amount_cents, paid: i.paid === 1 })),
     taxExemptionText: lang === 'fa' ? (invoice.public_note ?? '') : (settings.tax_exemption_text || seller.tax_exemption_text),
     paymentTermsText: settings.payment_terms_text,
     thanksText: settings.thanks_text,
     showBank: settings.show_bank,
     accentColor: settings.accent_color,
     brandHeading: settings.brand_heading ?? undefined,
+    customFont: settings.custom_font ?? undefined,
     draft: isDraft,
   });
   return c.html(html);
@@ -114,6 +123,13 @@ invoiceRoutes.post('/:id/issue', rateLimit({ key: 'issue', limit: 30, windowMs: 
     c.req.header('Idempotency-Key') || invoice.idempotency_key || `issue-${invoice.id}-${newId('k')}`;
   const result = await issueInvoice(c.env, invoice.id, idempotencyKey, c.get('actor')!.email);
   return ok(c, result);
+});
+
+/** Toggle an installment's paid flag. */
+invoiceRoutes.put('/:id/installments/:insId', async (c) => {
+  const body = await parseBody(c, z.object({ paid: z.boolean() }));
+  await markInstallmentPaid(c.env.DB, c.req.param('insId'), body.paid);
+  return ok(c, { updated: true });
 });
 
 /** Create a Stornorechnung for an issued invoice. */

@@ -1,5 +1,40 @@
 import { describe, it, expect } from 'vitest';
-import { lineTotalCents, computeTotals, euroStringToCents, parseQuantity } from '../src/lib/money';
+import { lineTotalCents, computeTotals, computeDocumentTotals, euroStringToCents, parseQuantity } from '../src/lib/money';
+
+describe('document totals — discount, VAT, advance, installments', () => {
+  const lines = [{ quantity: '10', unitPriceCents: 10000 }]; // 1.000,00
+
+  it('percent discount + VAT + advance → amount due', () => {
+    const d = computeDocumentTotals({ lines, discountMode: 'PERCENT', discountValue: 1000, taxRateBp: 1900, advancePaidCents: 20000 });
+    expect(d.lineSubtotalCents).toBe(100000);
+    expect(d.discountCents).toBe(10000);   // 10%
+    expect(d.netCents).toBe(90000);
+    expect(d.taxCents).toBe(17100);         // 19% of 90.000
+    expect(d.totalCents).toBe(107100);
+    expect(d.advancePaidCents).toBe(20000);
+    expect(d.amountDueCents).toBe(87100);
+  });
+
+  it('fixed discount is capped at the subtotal', () => {
+    const d = computeDocumentTotals({ lines, discountMode: 'FIXED', discountValue: 999999 });
+    expect(d.discountCents).toBe(100000);
+    expect(d.netCents).toBe(0);
+    expect(d.totalCents).toBe(0);
+  });
+
+  it('Kleinunternehmer (no discount, no VAT) keeps total = subtotal', () => {
+    const d = computeDocumentTotals({ lines });
+    expect(d.totalCents).toBe(100000);
+    expect(d.taxCents).toBe(0);
+    expect(d.amountDueCents).toBe(100000);
+  });
+
+  it('Iranian 10% VAT (1000 bp)', () => {
+    const d = computeDocumentTotals({ lines: [{ quantity: '1', unitPriceCents: 5000000 }], taxRateBp: 1000 });
+    expect(d.taxCents).toBe(500000);
+    expect(d.totalCents).toBe(5500000);
+  });
+});
 
 describe('money — integer cents, no floats', () => {
   it('multiplies whole quantity by unit price', () => {

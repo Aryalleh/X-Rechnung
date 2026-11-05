@@ -12,6 +12,7 @@
  */
 import { formatMoney, formatMoneyLatin, formatDateDe, toPersianDigits } from '../../lib/format';
 import type { DocumentType } from '../../config/constants';
+import { persianFontFaceCss } from './fonts';
 
 export type Lang = 'de' | 'en' | 'fa';
 
@@ -26,9 +27,11 @@ export interface TemplateItem {
   rightsText: string | null;
 }
 
-export interface VatRow {
-  label: string;
+export interface TemplateInstallment {
+  label?: string | null;
+  dueDate?: string | null;
   amountCents: number;
+  paid?: boolean;
 }
 
 export interface TemplateData {
@@ -48,9 +51,23 @@ export interface TemplateData {
   buyerReference: string | null;
   orderReference: string | null;
   items: TemplateItem[];
+  /** Sum of line totals (before document discount / VAT). */
   subtotalCents?: number;
-  vatRows?: VatRow[];
+  /** Document-level discount. */
+  discountCents?: number;
+  /** Net = subtotal − discount. */
+  netCents?: number;
+  /** VAT rate in basis points (1900 = 19%); 0 = tax-free. */
+  taxRateBp?: number;
+  /** VAT amount. */
+  taxCents?: number;
+  /** Gross total. */
   totalCents: number;
+  /** Prepaid advance (Anzahlung). */
+  advancePaidCents?: number;
+  /** total − advance. */
+  amountDueCents?: number;
+  installments?: TemplateInstallment[];
   taxExemptionText: string;
   paymentTermsText: string | null;
   thanksText: string | null;
@@ -61,6 +78,8 @@ export interface TemplateData {
   accentColor?: string;
   /** Bold display heading; defaults to business name / full name. */
   brandHeading?: string;
+  /** Custom uploaded invoice font (data URLs); overrides Vazirmatn for Persian. */
+  customFont?: { family?: string; regularDataUrl?: string; boldDataUrl?: string };
 }
 
 interface Labels {
@@ -74,6 +93,15 @@ interface Labels {
   colTotal: string;
   subtotal: string;
   total: string;
+  discount: string;
+  net: string;
+  vat: (ratePct: string) => string;
+  advance: string;
+  amountDue: string;
+  planTitle: string;
+  planDue: string;
+  planAmount: string;
+  planPaid: string;
   metaNumber: string;
   metaDate: string;
   metaDelivery: string;
@@ -95,7 +123,9 @@ const L: Record<Lang, Labels> = {
     greeting: 'Sehr geehrte Damen und Herren,',
     intro: 'vielen Dank für Ihren Auftrag und das damit verbundene Vertrauen! Hiermit stelle ich Ihnen die folgenden Leistungen in Rechnung:',
     colService: 'Leistung', colScope: 'Umfang', colPrice: 'Preis', colTotal: 'Gesamt',
-    subtotal: 'Gesamtbetrag (netto)', total: 'Gesamtbetrag',
+    subtotal: 'Zwischensumme', total: 'Gesamtbetrag',
+    discount: 'Rabatt', net: 'Nettobetrag', vat: (p) => `zzgl. ${p}% USt`, advance: 'abzügl. Anzahlung', amountDue: 'Zahlbetrag',
+    planTitle: 'Zahlungsplan', planDue: 'Fällig', planAmount: 'Betrag', planPaid: 'Bezahlt',
     metaNumber: 'Rechnungsnr', metaDate: 'Datum', metaDelivery: 'Leistungsdatum', metaCustomer: 'Kundennr', metaContact: 'Ansprechpartner',
     payment: (d) => `Bitte überweisen Sie den Rechnungsbetrag unter Angabe der Rechnungsnummer auf das unten angegebene Konto. Der Rechnungsbetrag ist zahlbar bis ${d}.`,
     regards: 'Mit freundlichen Grüßen',
@@ -109,7 +139,9 @@ const L: Record<Lang, Labels> = {
     greeting: 'Dear Sir or Madam,',
     intro: 'thank you very much for your order and your trust. I hereby invoice you for the following services:',
     colService: 'Service', colScope: 'Quantity', colPrice: 'Price', colTotal: 'Total',
-    subtotal: 'Subtotal (net)', total: 'Total amount',
+    subtotal: 'Subtotal', total: 'Total amount',
+    discount: 'Discount', net: 'Net amount', vat: (p) => `VAT ${p}%`, advance: 'less advance payment', amountDue: 'Amount due',
+    planTitle: 'Payment schedule', planDue: 'Due', planAmount: 'Amount', planPaid: 'Paid',
     metaNumber: 'Invoice no', metaDate: 'Date', metaDelivery: 'Service date', metaCustomer: 'Customer no', metaContact: 'Contact',
     payment: (d) => `Please transfer the invoice amount, quoting the invoice number, to the account below. Payment is due by ${d}.`,
     regards: 'Kind regards',
@@ -123,7 +155,9 @@ const L: Record<Lang, Labels> = {
     greeting: 'با سلام و احترام،',
     intro: 'با تشکر از سفارش و اعتماد شما؛ بدین‌وسیله خدمات زیر صورتحساب می‌شود:',
     colService: 'شرح خدمات', colScope: 'مقدار', colPrice: 'قیمت واحد', colTotal: 'جمع',
-    subtotal: 'جمع (خالص)', total: 'مبلغ کل',
+    subtotal: 'جمع جزء', total: 'مبلغ کل',
+    discount: 'تخفیف', net: 'مبلغ خالص', vat: (p) => `مالیات بر ارزش افزوده ${p}٪`, advance: 'کسر پیش‌پرداخت', amountDue: 'مبلغ قابل پرداخت',
+    planTitle: 'برنامهٔ پرداخت اقساط', planDue: 'سررسید', planAmount: 'مبلغ', planPaid: 'پرداخت‌شده',
     metaNumber: 'شماره فاکتور', metaDate: 'تاریخ', metaDelivery: 'تاریخ خدمت', metaCustomer: 'شماره مشتری', metaContact: 'طرف حساب',
     payment: (d) => `لطفاً مبلغ فاکتور را با ذکر شماره فاکتور به حساب زیر واریز کنید. مهلت پرداخت تا ${d} است.`,
     regards: 'با احترام',
@@ -173,10 +207,25 @@ export function renderInvoiceHtml(d: TemplateData): string {
     </tr>`;
   }).join('');
 
+  const subtotal = d.subtotalCents ?? d.totalCents;
+  const discount = d.discountCents ?? 0;
+  const net = d.netCents ?? subtotal;
+  const taxBp = d.taxRateBp ?? 0;
+  const tax = d.taxCents ?? 0;
+  const advance = d.advancePaidCents ?? 0;
+  const amountDue = d.amountDueCents ?? d.totalCents;
+  const hasBreakdown = discount > 0 || tax > 0;
+
+  // Summary rows shown above the big total (Zwischensumme / Rabatt / USt …).
   const summaryRows: string[] = [];
-  if (d.vatRows && d.vatRows.length) {
-    summaryRows.push(`<tr class="sum"><td colspan="4">${esc(t.subtotal)}</td><td class="amt">${money(d.subtotalCents ?? d.totalCents)}</td></tr>`);
-    for (const v of d.vatRows) summaryRows.push(`<tr class="sum"><td colspan="4">${esc(v.label)}</td><td class="amt">${money(v.amountCents)}</td></tr>`);
+  if (hasBreakdown) {
+    summaryRows.push(`<tr class="sum"><td colspan="4">${esc(t.subtotal)}</td><td class="amt">${money(subtotal)}</td></tr>`);
+    if (discount > 0) summaryRows.push(`<tr class="sum"><td colspan="4">${esc(t.discount)}</td><td class="amt">− ${money(discount)}</td></tr>`);
+    if (tax > 0) {
+      summaryRows.push(`<tr class="sum"><td colspan="4">${esc(t.net)}</td><td class="amt">${money(net)}</td></tr>`);
+      const ratePct = num((taxBp / 100).toString().replace('.', lang === 'de' ? ',' : '.'));
+      summaryRows.push(`<tr class="sum"><td colspan="4">${esc(t.vat(ratePct))}</td><td class="amt">${money(tax)}</td></tr>`);
+    }
   }
 
   const metaRow = (label: string, value: string) => value
@@ -185,17 +234,49 @@ export function renderInvoiceHtml(d: TemplateData): string {
   const footLine = (label: string, value: unknown) => value
     ? `<div class="f-row"><span class="f-k">${esc(label)}</span><span class="f-v">${esc(value)}</span></div>` : '';
 
+  // Advance + amount-due lines (only when there is an advance payment).
+  const dueBlock = advance > 0
+    ? `<div class="total sub"><span class="lbl">${esc(t.advance)}</span><span class="val-sm">− ${money(advance)}</span></div>
+       <div class="total due"><span class="lbl">${esc(t.amountDue)}</span><span class="val">${money(amountDue)}</span></div>`
+    : '';
+
+  // Installment schedule (Zahlungsplan / برنامهٔ پرداخت اقساط).
+  const installments = d.installments ?? [];
+  const planBlock = installments.length
+    ? `<div class="plan">
+        <div class="plan-title">${esc(t.planTitle)}</div>
+        <table class="plan-table"><thead><tr>
+          <th>#</th><th>${esc(t.planDue)}</th><th class="amt">${esc(t.planAmount)}</th><th>${esc(t.planPaid)}</th>
+        </tr></thead><tbody>
+        ${installments.map((p, i) => `<tr>
+          <td>${num(String(i + 1))}</td>
+          <td>${fdate(p.dueDate)}${p.label ? ` · ${esc(p.label)}` : ''}</td>
+          <td class="amt">${money(p.amountCents)}</td>
+          <td>${p.paid ? '✓' : '—'}</td>
+        </tr>`).join('')}
+        </tbody></table>
+      </div>`
+    : '';
+
   const taxNote = d.taxExemptionText ? `<div class="tax-note">${esc(d.taxExemptionText)}</div>` : '';
   const watermark = d.draft ? `<div class="watermark">${esc(t.draft)}</div>` : '';
+
+  // Persian default font = embedded Vazirmatn (or an uploaded custom font).
+  const fontFamily = d.customFont?.family || 'Vazirmatn';
+  const fontFaces = rtl ? persianFontFaceCss(d.customFont) : '';
+  const bodyFont = rtl
+    ? `'${fontFamily}', 'Noto Sans Arabic', Tahoma, Arial, sans-serif`
+    : `'Helvetica Neue', Arial, 'Noto Sans', sans-serif`;
 
   return `<!doctype html>
 <html lang="${lang}" dir="${rtl ? 'rtl' : 'ltr'}"><head><meta charset="utf-8">
 <style>
   @page { size: A4; margin: 0; }
+  ${fontFaces}
   * { box-sizing: border-box; }
   :root { --accent: ${accent}; --ink: #141414; --muted: #6b6b6b; --line: #e6e6e6; --stripe: #f5f1e6; }
   html, body { margin: 0; color: var(--ink); font-size: 10.5pt; line-height: 1.5;
-    font-family: ${rtl ? '"Vazirmatn", "Noto Sans Arabic", Tahoma, Arial, sans-serif' : '"Helvetica Neue", Arial, "Noto Sans", sans-serif'}; }
+    font-family: ${bodyFont}; }
   .bar { height: 10px; background: var(--accent); }
   .page { padding: 16mm 16mm 14mm; position: relative; }
   .watermark { position: fixed; top: 44%; left: 0; right: 0; text-align: center;
@@ -227,13 +308,23 @@ export function renderInvoiceHtml(d: TemplateData): string {
   .disc { font-size: 8pt; color: #a00; }
   .total { display: flex; justify-content: space-between; align-items: baseline; margin-top: 5mm;
     padding: 2mm 3mm; border-top: 2pt solid var(--ink); }
+  .total.sub { margin-top: 0; padding-top: 1.5mm; padding-bottom: 1mm; border-top: none; }
+  .total.due { margin-top: 0; border-top: 1pt solid var(--ink); }
   .total .lbl { font-weight: 700; font-size: 11pt; }
   .total .val { font-weight: 800; font-size: 20pt; }
-  .total .val .cur { font-size: 11pt; font-weight: 700; }
+  .total .val-sm { font-weight: 700; font-size: 11pt; color: #a00; }
+  .plan { margin-top: 6mm; }
+  .plan-title { font-weight: 700; font-size: 10pt; margin-bottom: 1.5mm; }
+  .plan-table { width: 100%; border-collapse: collapse; }
+  .plan-table th { font-size: 8.5pt; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted);
+    padding: 1.4mm 2mm; border-bottom: 1pt solid var(--ink); text-align: ${rtl ? 'right' : 'left'}; }
+  .plan-table td { padding: 1.6mm 2mm; border-bottom: 0.3pt solid var(--line); font-size: 9.5pt; }
+  .plan-table .amt { text-align: ${rtl ? 'left' : 'right'}; white-space: nowrap; }
   .tax-note { margin: 5mm 0; padding: 2.5mm 3mm; background: #faf8f0; border-${rtl ? 'right' : 'left'}: 2.5pt solid var(--accent); font-size: 9.5pt; }
   .pay { margin-top: 7mm; max-width: 125mm; }
   .regards { margin-top: 8mm; }
-  .footer { margin-top: 12mm; display: flex; justify-content: ${rtl ? 'flex-start' : 'flex-end'}; }
+  /* Footer block: right for LTR, LEFT for Persian (RTL flex-end resolves left). */
+  .footer { margin-top: 12mm; display: flex; justify-content: flex-end; }
   .footer .cols { font-size: 8.5pt; min-width: 72mm; }
   .footer .addr { font-weight: 700; margin-bottom: 2mm; }
   .f-row { display: flex; gap: 3mm; margin-bottom: 0.6mm; }
@@ -297,8 +388,10 @@ export function renderInvoiceHtml(d: TemplateData): string {
       <span class="lbl">${t.total}</span>
       <span class="val">${money(d.totalCents)}</span>
     </div>
+    ${dueBlock}
 
     ${taxNote}
+    ${planBlock}
 
     <div class="pay">${esc(t.payment(fdate(d.dueDate)))}</div>
     ${d.thanksText ? `<div class="pay">${esc(d.thanksText)}</div>` : ''}

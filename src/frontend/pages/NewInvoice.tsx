@@ -22,6 +22,12 @@ export function NewInvoice() {
   const [mode, setMode] = useState<'fa' | 'de' | 'both'>('both');
   const [err, setErr] = useState<string | null>(null);
   const [invoiceId, setInvoiceId] = useState<string | null>(null);
+  // Financial extras: discount, VAT, advance payment, installments.
+  const [discountMode, setDiscountMode] = useState<'NONE' | 'PERCENT' | 'FIXED'>('NONE');
+  const [discountValue, setDiscountValue] = useState(0); // PERCENT: %, FIXED: minor units
+  const [taxRatePct, setTaxRatePct] = useState(0);
+  const [advanceCents, setAdvanceCents] = useState(0);
+  const [installments, setInstallments] = useState<{ due_date: string; amount_cents: number; label?: string }[]>([]);
   const servicesRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -66,7 +72,13 @@ export function NewInvoice() {
     const q = Number(it.quantity_decimal.replace(',', '.')) || 0;
     return Math.round(q * it.unit_price_cents) - it.discount_cents;
   }
-  const total = items.reduce((a, it) => a + lineTotal(it), 0);
+  const subtotal = items.reduce((a, it) => a + lineTotal(it), 0);
+  const discountC = discountMode === 'PERCENT' ? Math.round((subtotal * discountValue) / 100)
+    : discountMode === 'FIXED' ? Math.min(discountValue, subtotal) : 0;
+  const netC = subtotal - discountC;
+  const taxC = Math.round((netC * taxRatePct) / 100);
+  const grand = netC + taxC;
+  const dueC = grand - advanceCents;
 
   async function saveDraft(): Promise<string> {
     const body = {
@@ -75,7 +87,12 @@ export function NewInvoice() {
       invoice_date: invoiceDate || undefined,
       currency,
       invoice_language: language,
-      tax_scenario: 'KLEINUNTERNEHMER_DE',
+      tax_scenario: taxRatePct > 0 ? 'CUSTOM_TAX_SCENARIO' : 'KLEINUNTERNEHMER_DE',
+      discount_mode: discountMode,
+      discount_value: discountMode === 'PERCENT' ? Math.round(discountValue * 100) : discountValue,
+      tax_rate_bp: Math.round(taxRatePct * 100),
+      advance_paid_cents: advanceCents,
+      installments: installments.filter((i) => i.amount_cents > 0),
       items: items.map((it) => ({ ...it })),
     };
     const draft = await api.post<{ id: string }>('/invoices', body);
@@ -155,13 +172,54 @@ export function NewInvoice() {
                 ))}
               </tbody>
             </table>
-            <div className="mt-3 text-left text-lg font-bold">
-              {language === 'fa' ? 'مبلغ کل: ' : 'Rechnungsbetrag: '}{money(total, currency)}
+            <div className="mt-3 ms-auto max-w-xs space-y-1 text-sm">
+              <div className="flex justify-between"><span className="text-ink-600">جمع جزء</span><span className="font-mono">{money(subtotal, currency)}</span></div>
+              {discountC > 0 && <div className="flex justify-between text-red-600"><span>تخفیف</span><span className="font-mono">− {money(discountC, currency)}</span></div>}
+              {taxC > 0 && <div className="flex justify-between"><span className="text-ink-600">مالیات ({taxRatePct}٪)</span><span className="font-mono">{money(taxC, currency)}</span></div>}
+              <div className="flex justify-between border-t border-ink-200 pt-1 text-base font-bold"><span>مبلغ کل</span><span className="font-mono">{money(grand, currency)}</span></div>
+              {advanceCents > 0 && <>
+                <div className="flex justify-between text-red-600"><span>کسر پیش‌پرداخت</span><span className="font-mono">− {money(advanceCents, currency)}</span></div>
+                <div className="flex justify-between font-bold"><span>مبلغ قابل پرداخت</span><span className="font-mono">{money(dueC, currency)}</span></div>
+              </>}
             </div>
-            {language === 'de' && currency === 'EUR' && (
+            {language === 'de' && currency === 'EUR' && taxRatePct === 0 && (
               <p className="mt-1 text-left text-xs text-gray-500">Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.</p>
             )}
           </div>
+
+          <details className="card mb-4">
+            <summary className="cursor-pointer font-semibold">اطلاعات مالی بیشتر (تخفیف، مالیات، پیش‌پرداخت، اقساط)</summary>
+            <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
+              <div><label className="label">نوع تخفیف</label>
+                <select className="input" value={discountMode} onChange={(e) => setDiscountMode(e.target.value as 'NONE' | 'PERCENT' | 'FIXED')}>
+                  <option value="NONE">بدون تخفیف</option><option value="PERCENT">درصدی (٪)</option><option value="FIXED">مبلغ ثابت</option>
+                </select>
+              </div>
+              <div><label className="label">{discountMode === 'PERCENT' ? 'درصد تخفیف' : 'مبلغ تخفیف (واحد خرد)'}</label>
+                <input className="input" dir="ltr" type="number" value={discountValue} disabled={discountMode === 'NONE'} onChange={(e) => setDiscountValue(Number(e.target.value))} /></div>
+              <div><label className="label">نرخ مالیات (٪)</label>
+                <input className="input" dir="ltr" type="number" step="0.5" value={taxRatePct} onChange={(e) => setTaxRatePct(Number(e.target.value))} />
+                <p className="mt-0.5 text-xs text-gray-500">۰ = معاف / Kleinunternehmer</p></div>
+              <div><label className="label">پیش‌پرداخت (واحد خرد)</label>
+                <input className="input" dir="ltr" type="number" value={advanceCents} onChange={(e) => setAdvanceCents(Number(e.target.value))} /></div>
+            </div>
+            <div className="mt-3">
+              <div className="mb-1 flex items-center justify-between">
+                <span className="label mb-0">اقساط</span>
+                <button type="button" className="btn-ghost text-xs" onClick={() => setInstallments((p) => [...p, { due_date: '', amount_cents: Math.max(0, dueC - p.reduce((a, i) => a + i.amount_cents, 0)) }])}>+ افزودن قسط</button>
+              </div>
+              {installments.map((ins, i) => (
+                <div key={i} className="mb-1 flex items-center gap-2">
+                  <input className="input w-40" type="date" value={ins.due_date} onChange={(e) => setInstallments((p) => p.map((x, j) => j === i ? { ...x, due_date: e.target.value } : x))} />
+                  <input className="input w-40" dir="ltr" type="number" placeholder="مبلغ (واحد خرد)" value={ins.amount_cents} onChange={(e) => setInstallments((p) => p.map((x, j) => j === i ? { ...x, amount_cents: Number(e.target.value) } : x))} />
+                  <button type="button" className="btn-ghost text-xs" onClick={() => setInstallments((p) => p.filter((_, j) => j !== i))}>حذف</button>
+                </div>
+              ))}
+              {installments.length > 0 && (
+                <p className="text-xs text-gray-500">جمع اقساط: {money(installments.reduce((a, i) => a + i.amount_cents, 0), currency)} — مبلغ قابل پرداخت: {money(dueC, currency)}</p>
+              )}
+            </div>
+          </details>
 
           <div className="flex gap-2">
             <button className="btn-ghost" onClick={saveDraft}>ذخیره پیش‌نویس</button>

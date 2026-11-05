@@ -105,6 +105,81 @@ function assertInteger(n: number, name: string): void {
   }
 }
 
+/** Multiply an integer by basis points (1 bp = 0.01%), half away from zero. */
+function applyBasisPoints(amount: number, bp: number): number {
+  if (bp === 0) return 0;
+  const num = BigInt(amount) * BigInt(bp);
+  const den = 10000n;
+  const neg = num < 0n;
+  const abs = neg ? -num : num;
+  const q = abs / den;
+  const r = abs % den;
+  const rounded = r * 2n >= den ? q + 1n : q;
+  return Number(neg ? -rounded : rounded);
+}
+
+export type DiscountMode = 'NONE' | 'PERCENT' | 'FIXED';
+
+export interface DocumentTotalsInput {
+  lines: LineInput[];
+  discountMode?: DiscountMode;
+  /** PERCENT: basis points (1000 = 10%). FIXED: minor units. */
+  discountValue?: number;
+  /** VAT rate in basis points (1900 = 19%). 0 = tax-free / Kleinunternehmer. */
+  taxRateBp?: number;
+  /** Prepaid amount (Anzahlung) already received before issuing. */
+  advancePaidCents?: number;
+}
+
+export interface DocumentTotals {
+  lineTotals: number[];
+  /** Sum of line totals (each already net of its own line discount). */
+  lineSubtotalCents: number;
+  /** Document-level discount applied after the line sum. */
+  discountCents: number;
+  /** lineSubtotal − documentDiscount. */
+  netCents: number;
+  /** VAT amount on the net. */
+  taxCents: number;
+  /** net + tax (gross). */
+  totalCents: number;
+  advancePaidCents: number;
+  /** total − advance (what is still payable). */
+  amountDueCents: number;
+}
+
+/**
+ * Full document calculation: line totals → document discount → net → VAT →
+ * gross total → minus advance = amount due. All integer minor units.
+ */
+export function computeDocumentTotals(input: DocumentTotalsInput): DocumentTotals {
+  const base = computeTotals(input.lines);
+  const lineSubtotal = base.subtotalCents;
+
+  const mode = input.discountMode ?? 'NONE';
+  let discount = 0;
+  if (mode === 'PERCENT') discount = applyBasisPoints(lineSubtotal, input.discountValue ?? 0);
+  else if (mode === 'FIXED') discount = Math.min(Math.max(0, Math.trunc(input.discountValue ?? 0)), lineSubtotal);
+
+  const net = lineSubtotal - discount;
+  const taxRateBp = Math.max(0, Math.trunc(input.taxRateBp ?? 0));
+  const tax = applyBasisPoints(net, taxRateBp);
+  const total = net + tax;
+  const advance = Math.max(0, Math.trunc(input.advancePaidCents ?? 0));
+  const amountDue = total - advance;
+
+  return {
+    lineTotals: base.lineTotals,
+    lineSubtotalCents: lineSubtotal,
+    discountCents: discount,
+    netCents: net,
+    taxCents: tax,
+    totalCents: total,
+    advancePaidCents: advance,
+    amountDueCents: amountDue,
+  };
+}
+
 /** Parse a EUR amount string like "1.250,00" or "1250.00" into integer cents. */
 export function euroStringToCents(input: string): number {
   const raw = input.trim().replace(/\s|€/g, '');

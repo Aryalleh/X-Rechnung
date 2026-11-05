@@ -98,6 +98,16 @@ export const invoiceDraftSchema = z.object({
   public_note: z.string().optional(),
   internal_note: z.string().optional(),
   items: z.array(invoiceItemSchema).default([]),
+  // Document-level discount, VAT, advance payment and installment plan.
+  discount_mode: z.enum(['NONE', 'PERCENT', 'FIXED']).default('NONE'),
+  discount_value: z.number().int().min(0).default(0), // PERCENT: basis points; FIXED: minor units
+  tax_rate_bp: z.number().int().min(0).max(100000).default(0), // 1900 = 19%
+  advance_paid_cents: cents.min(0).default(0),
+  installments: z.array(z.object({
+    label: z.string().optional(),
+    due_date: isoDate.optional(),
+    amount_cents: cents.min(0),
+  })).default([]),
 });
 
 export const paymentSchema = z.object({

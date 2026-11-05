@@ -67,6 +67,8 @@ export interface InvoiceSettings {
   tax_exemption_text: string;
   accent_color: string;
   brand_heading: string | null;
+  /** Optional uploaded invoice font (data URLs); overrides Vazirmatn for Persian. */
+  custom_font: { family?: string; regularDataUrl?: string; boldDataUrl?: string } | null;
 }
 
 export async function getInvoiceSettings(db: D1Database): Promise<InvoiceSettings> {
@@ -87,6 +89,9 @@ export async function getInvoiceSettings(db: D1Database): Promise<InvoiceSetting
     tax_exemption_text: (s.tax_exemption_text as string) ?? DEFAULTS.taxExemptionText,
     accent_color: (s.accent_color as string) ?? '#F2EA00',
     brand_heading: (s.brand_heading as string) ?? null,
+    custom_font: (s.font_regular_data_url as string)
+      ? { family: (s.font_family as string) || 'CustomInvoiceFont', regularDataUrl: s.font_regular_data_url as string, boldDataUrl: (s.font_bold_data_url as string) || (s.font_regular_data_url as string) }
+      : null,
   };
 }
 

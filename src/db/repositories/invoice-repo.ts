@@ -26,6 +26,13 @@ export interface Invoice {
   subtotal_cents: number;
   discount_cents: number;
   total_cents: number;
+  discount_mode: 'NONE' | 'PERCENT' | 'FIXED';
+  discount_value: number;
+  global_discount_cents: number;
+  tax_rate_bp: number;
+  tax_amount_cents: number;
+  advance_paid_cents: number;
+  amount_due_cents: number;
   tax_exemption_text: string | null;
   tax_text_snapshot: string | null;
   payment_terms_snapshot: string | null;
@@ -236,5 +243,61 @@ export function getRelations(db: D1Database, invoiceId: string) {
     db,
     `SELECT id, related_invoice_id, relation_type FROM invoice_relations WHERE invoice_id = ?1`,
     invoiceId,
+  );
+}
+
+// --------------------------------------------------------------------------
+// Financials (document discount / VAT / advance) + installment schedule.
+// --------------------------------------------------------------------------
+
+export interface Financials {
+  discountMode: 'NONE' | 'PERCENT' | 'FIXED';
+  discountValue: number;
+  subtotalCents: number;
+  globalDiscountCents: number;
+  taxRateBp: number;
+  taxAmountCents: number;
+  totalCents: number;
+  advancePaidCents: number;
+  amountDueCents: number;
+}
+
+export async function setFinancials(db: D1Database, invoiceId: string, f: Financials): Promise<void> {
+  await run(
+    db,
+    `UPDATE invoices SET
+       discount_mode=?2, discount_value=?3, subtotal_cents=?4, global_discount_cents=?5,
+       discount_cents=?5, tax_rate_bp=?6, tax_amount_cents=?7, total_cents=?8,
+       advance_paid_cents=?9, amount_due_cents=?10, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+     WHERE id=?1`,
+    invoiceId, f.discountMode, f.discountValue, f.subtotalCents, f.globalDiscountCents,
+    f.taxRateBp, f.taxAmountCents, f.totalCents, f.advancePaidCents, f.amountDueCents,
+  );
+}
+
+export interface InstallmentInput { label?: string; due_date?: string; amount_cents: number; }
+export interface Installment { id: string; position: number; label: string | null; due_date: string | null; amount_cents: number; paid: number; paid_at: string | null; }
+
+export async function replaceInstallments(db: D1Database, invoiceId: string, items: InstallmentInput[]): Promise<void> {
+  const statements: D1PreparedStatement[] = [stmt(db, `DELETE FROM invoice_installments WHERE invoice_id = ?1`, invoiceId)];
+  items.forEach((it, i) => {
+    statements.push(stmt(
+      db,
+      `INSERT INTO invoice_installments (id, invoice_id, position, label, due_date, amount_cents) VALUES (?1,?2,?3,?4,?5,?6)`,
+      newId('ins'), invoiceId, i + 1, it.label ?? null, it.due_date ?? null, it.amount_cents,
+    ));
+  });
+  await batch(db, statements);
+}
+
+export function getInstallments(db: D1Database, invoiceId: string): Promise<Installment[]> {
+  return all<Installment>(db, `SELECT * FROM invoice_installments WHERE invoice_id = ?1 ORDER BY position`, invoiceId);
+}
+
+export async function markInstallmentPaid(db: D1Database, id: string, paid: boolean): Promise<void> {
+  await run(
+    db,
+    `UPDATE invoice_installments SET paid=?2, paid_at=CASE WHEN ?2=1 THEN strftime('%Y-%m-%dT%H:%M:%fZ','now') ELSE NULL END WHERE id=?1`,
+    id, paid ? 1 : 0,
   );
 }

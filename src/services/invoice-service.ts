@@ -1,9 +1,10 @@
 import type { z } from 'zod';
 import { invoiceDraftSchema } from '../lib/schemas';
-import { computeTotals, type LineInput } from '../lib/money';
+import { computeTotals, computeDocumentTotals, type LineInput } from '../lib/money';
 import { berlinToday, addDays, yearOf } from '../lib/format';
 import {
   createDraft, updateDraftHeader, replaceDraftItems, getInvoice, getItems,
+  setFinancials, replaceInstallments,
   type Invoice, type InvoiceItem,
 } from '../db/repositories/invoice-repo';
 import { getCustomerById, getCustomerByCode } from '../db/repositories/customer-repo';
@@ -38,6 +39,30 @@ function recompute(items: DraftBody['items']): { lines: (LineInput & { total: nu
   const totals = computeTotals(lineInputs);
   const lines = lineInputs.map((l, i) => ({ ...l, total: totals.lineTotals[i]! }));
   return { lines, totals };
+}
+
+/** Compute document-level discount/VAT/advance and persist financials + installments. */
+async function persistFinancials(db: D1Database, id: string, body: DraftBody): Promise<void> {
+  const taxRateBp = body.tax_scenario === 'KLEINUNTERNEHMER_DE' ? 0 : body.tax_rate_bp;
+  const doc = computeDocumentTotals({
+    lines: body.items.map((it) => ({ quantity: it.quantity_decimal, unitPriceCents: it.unit_price_cents, discountCents: it.discount_cents })),
+    discountMode: body.discount_mode,
+    discountValue: body.discount_value,
+    taxRateBp,
+    advancePaidCents: body.advance_paid_cents,
+  });
+  await setFinancials(db, id, {
+    discountMode: body.discount_mode,
+    discountValue: body.discount_value,
+    subtotalCents: doc.lineSubtotalCents,
+    globalDiscountCents: doc.discountCents,
+    taxRateBp,
+    taxAmountCents: doc.taxCents,
+    totalCents: doc.totalCents,
+    advancePaidCents: doc.advancePaidCents,
+    amountDueCents: doc.amountDueCents,
+  });
+  await replaceInstallments(db, id, body.installments);
 }
 
 export async function createInvoiceDraft(db: D1Database, body: DraftBody, actorEmail: string): Promise<Invoice> {
@@ -86,6 +111,7 @@ export async function createInvoiceDraft(db: D1Database, body: DraftBody, actorE
     })),
     { subtotal: totals.subtotalCents, discount: totals.discountCents, total: totals.totalCents },
   );
+  await persistFinancials(db, draft.id, body);
 
   await audit(db, { entityType: 'invoice', entityId: draft.id, eventType: 'INVOICE_DRAFT_CREATED', actorEmail });
   return (await getInvoice(db, draft.id))!;
@@ -140,22 +166,22 @@ export async function updateInvoiceDraft(db: D1Database, id: string, body: Draft
     })),
     { subtotal: totals.subtotalCents, discount: totals.discountCents, total: totals.totalCents },
   );
+  await persistFinancials(db, id, body);
 
   await audit(db, { entityType: 'invoice', entityId: id, eventType: 'INVOICE_DRAFT_UPDATED', actorEmail });
   return (await getInvoice(db, id))!;
 }
 
 /**
- * Kleinunternehmer §19 enforcement: in KLEINUNTERNEHMER_DE mode the system
- * must never carry a VAT rate/amount. Our schema has no VAT fields, but we
- * defensively reject any stray tax fields that might arrive.
+ * Kleinunternehmer §19 enforcement: in KLEINUNTERNEHMER_DE mode no VAT rate may
+ * be charged (persistFinancials also forces tax_rate_bp to 0). A VAT rate is
+ * only meaningful for the business/custom scenarios (e.g. Iranian 10%, German
+ * 19%). We reject an explicit non-zero rate under Kleinunternehmer so it can't
+ * slip in silently.
  */
 export function enforceTaxScenario(body: DraftBody): void {
-  if (body.tax_scenario === 'KLEINUNTERNEHMER_DE') {
-    const stray = body as unknown as Record<string, unknown>;
-    if ('vat_rate' in stray || 'tax_amount_cents' in stray || 'vat_cents' in stray) {
-      throw new AppError('VALIDATION_ERROR', 'VAT is not allowed in Kleinunternehmer mode');
-    }
+  if (body.tax_scenario === 'KLEINUNTERNEHMER_DE' && body.tax_rate_bp > 0) {
+    throw new AppError('VALIDATION_ERROR', 'VAT is not allowed in Kleinunternehmer mode', { tax_rate_bp: 'در حالت Kleinunternehmer مالیات مجاز نیست' });
   }
 }
 

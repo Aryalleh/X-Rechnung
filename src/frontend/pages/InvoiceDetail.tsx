@@ -8,6 +8,7 @@ interface Detail {
   items: { id: string; description: string; quantity_decimal: string; unit: string; line_total_cents: number }[];
   payments: { paidCents: number; remainingCents: number; payments: { payment_date: string; amount_cents: number; payment_method: string }[] };
   relations: { related_invoice_id: string; relation_type: string }[];
+  installments: { id: string; position: number; label: string | null; due_date: string | null; amount_cents: number; paid: number }[];
 }
 
 export function InvoiceDetail() {
@@ -33,6 +34,7 @@ export function InvoiceDetail() {
   async function storno() { setMsg(null); try { await api.post(`/invoices/${id}/storno`); load(); } catch (e) { setMsg((e as Error).message); } }
   async function send() { setMsg(null); try { await api.post(`/invoices/${id}/send`, {}); setMsg('ایمیل ارسال شد.'); load(); } catch (e) { setMsg((e as Error).message); } }
   async function addPayment() { setMsg(null); try { await api.post(`/payments/${id}`, pay); load(); } catch (e) { setMsg((e as Error).message); } }
+  async function toggleInstallment(insId: string, paid: boolean) { try { await api.put(`/invoices/${id}/installments/${insId}`, { paid }); load(); } catch (e) { setMsg((e as Error).message); } }
 
   if (!d) return <div className="text-gray-500">{msg ?? 'در حال بارگذاری…'}</div>;
   const inv = d.invoice;
@@ -83,6 +85,30 @@ export function InvoiceDetail() {
           </div>
         )}
       </div>
+
+      {d.installments.length > 0 && (
+        <div className="card mb-4">
+          <div className="mb-2 font-semibold">اقساط</div>
+          <table className="data">
+            <thead><tr><th>#</th><th>سررسید</th><th>مبلغ</th><th>وضعیت</th></tr></thead>
+            <tbody>
+              {d.installments.map((ins) => (
+                <tr key={ins.id}>
+                  <td>{ins.position}</td>
+                  <td dir="ltr">{ins.due_date ?? ''}{ins.label ? ` · ${ins.label}` : ''}</td>
+                  <td className="font-mono">{money(ins.amount_cents, inv.currency)}</td>
+                  <td>
+                    <label className="flex items-center gap-1 text-sm">
+                      <input type="checkbox" checked={ins.paid === 1} onChange={(e) => toggleInstallment(ins.id, e.target.checked)} />
+                      {ins.paid ? 'پرداخت‌شده' : 'پرداخت‌نشده'}
+                    </label>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {d.relations.length > 0 && (
         <div className="card text-sm">

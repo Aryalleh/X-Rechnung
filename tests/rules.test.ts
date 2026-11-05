@@ -5,13 +5,17 @@ import { buildZip } from '../src/lib/zip';
 import { sniff, validateUpload } from '../src/lib/file-signature';
 
 describe('Kleinunternehmer §19 rules', () => {
-  it('rejects stray VAT fields in KLEINUNTERNEHMER_DE mode', () => {
-    const withVat = { tax_scenario: 'KLEINUNTERNEHMER_DE', vat_rate: 19, items: [] } as never;
+  it('rejects a VAT rate in KLEINUNTERNEHMER_DE mode', () => {
+    const withVat = { tax_scenario: 'KLEINUNTERNEHMER_DE', tax_rate_bp: 1900, items: [] } as never;
     expect(() => enforceTaxScenario(withVat)).toThrow();
   });
-  it('accepts a clean Kleinunternehmer draft', () => {
-    const clean = { tax_scenario: 'KLEINUNTERNEHMER_DE', items: [] } as never;
+  it('accepts a clean Kleinunternehmer draft (no VAT)', () => {
+    const clean = { tax_scenario: 'KLEINUNTERNEHMER_DE', tax_rate_bp: 0, items: [] } as never;
     expect(() => enforceTaxScenario(clean)).not.toThrow();
+  });
+  it('allows a VAT rate for a business (CUSTOM) scenario', () => {
+    const biz = { tax_scenario: 'CUSTOM_TAX_SCENARIO', tax_rate_bp: 1000, items: [] } as never;
+    expect(() => enforceTaxScenario(biz)).not.toThrow();
   });
 });
 
