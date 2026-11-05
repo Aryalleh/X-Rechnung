@@ -6,7 +6,7 @@
   "description": "Invoice system for German Freiberufler / Kleinunternehmer (§19 UStG) on Cloudflare Workers",
   "scripts": {
     "dev": "vite build --watch & wrangler dev",
-    "build": "npm install --no-save --no-audit --no-fund wrangler@4.157.0 && vite build",
+    "build": "vite build",
     "deploy": "npm run build && wrangler d1 migrations apply DB --remote && wrangler deploy",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
