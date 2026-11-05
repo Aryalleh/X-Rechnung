@@ -1,3 +1,4 @@
+import { iranTaxNote, iranTreatment, isIranCurrency } from '../services/iran-tax';
 import { Hono } from 'hono';
 import type { HonoEnv } from '../http-types';
 import { z } from 'zod';
@@ -73,6 +74,11 @@ invoiceRoutes.get('/:id/preview', async (c) => {
   const isDraft = invoice.status === 'DRAFT' || invoice.status === 'READY_TO_ISSUE';
   const lang = (['fa', 'en', 'de'].includes(invoice.invoice_language) ? invoice.invoice_language : 'de') as 'de' | 'fa' | 'en';
   const draftLabel = lang === 'fa' ? 'پیش‌نویس' : lang === 'en' ? 'DRAFT' : 'ENTWURF';
+  // Iranian tax treatment: live for drafts, frozen once issued.
+  const iran = !isIranCurrency(invoice.currency) ? null
+    : !isDraft && invoice.iran_tax_mode
+      ? { mode: invoice.iran_tax_mode, rateBp: invoice.tax_rate_bp, invoiceType: (invoice.iran_invoice_type === 2 ? 2 : invoice.iran_tax_mode === 'VAT' ? 1 : null) as 1 | 2 | null }
+      : iranTreatment(seller, invoice.iran_invoice_type);
 
   const html = renderInvoiceDocument({
     language: lang,
@@ -98,12 +104,14 @@ invoiceRoutes.get('/:id/preview', async (c) => {
     subtotalCents: invoice.subtotal_cents,
     discountCents: invoice.global_discount_cents,
     netCents: invoice.subtotal_cents - invoice.global_discount_cents,
-    taxRateBp: invoice.tax_scenario === 'KLEINUNTERNEHMER_DE' ? 0 : invoice.tax_rate_bp,
+    taxRateBp: iran ? iran.rateBp : invoice.tax_scenario === 'KLEINUNTERNEHMER_DE' ? 0 : invoice.tax_rate_bp,
     taxCents: invoice.tax_amount_cents,
     advancePaidCents: invoice.advance_paid_cents,
     amountDueCents: invoice.amount_due_cents || invoice.total_cents,
     installments: (await getInstallments(c.env.DB, invoice.id)).map((i) => ({ label: i.label, dueDate: i.due_date, amountCents: i.amount_cents, paid: i.paid === 1 })),
-    taxExemptionText: lang === 'fa' ? (invoice.public_note ?? '') : (settings.tax_exemption_text || seller.tax_exemption_text),
+    taxExemptionText: iran
+      ? [iranTaxNote(iran, lang), invoice.public_note].filter(Boolean).join('\n')
+      : lang === 'fa' ? (invoice.public_note ?? '') : (settings.tax_exemption_text || seller.tax_exemption_text),
     paymentTermsText: settings.payment_terms_text,
     thanksText: settings.thanks_text,
     showBank: settings.show_bank,

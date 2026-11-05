@@ -1,3 +1,5 @@
+import { setFinancials, setIranTax } from '../db/repositories/invoice-repo';
+import { iranTaxNote, iranTreatment, isIranCurrency } from './iran-tax';
 /**
  * Invoice issue pipeline — idempotent finalization.
  *
@@ -73,7 +75,10 @@ export async function issueInvoice(
   await assertReadyToIssue(db, invoice, items);
 
   const seller = await getActiveSeller(db);
-  assertSellerIssuable(seller);
+  assertSellerIssuable(seller, invoice.currency);
+  // Iranian invoices: VAT follows the seller's current Iranian registration.
+  const iran = isIranCurrency(invoice.currency) ? iranTreatment(seller, invoice.iran_invoice_type) : null;
+  const rateBp = iran ? iran.rateBp : invoice.tax_scenario === 'KLEINUNTERNEHMER_DE' ? 0 : invoice.tax_rate_bp;
   const customer = await getCustomerById(db, invoice.customer_id!);
   if (!customer) throw new AppError('CUSTOMER_NOT_FOUND');
 
@@ -83,7 +88,7 @@ export async function issueInvoice(
     lines: items.map((it) => ({ quantity: it.quantity_decimal, unitPriceCents: it.unit_price_cents, discountCents: it.discount_cents })),
     discountMode: invoice.discount_mode,
     discountValue: invoice.discount_value,
-    taxRateBp: invoice.tax_scenario === 'KLEINUNTERNEHMER_DE' ? 0 : invoice.tax_rate_bp,
+    taxRateBp: rateBp,
     advancePaidCents: invoice.advance_paid_cents,
   });
   const installments = await getInstallments(db, invoiceId);
@@ -97,7 +102,9 @@ export async function issueInvoice(
   // invoices (localized). For Persian/Iran invoices the optional note comes from
   // public_note (usually none).
   const EN_19 = 'In accordance with § 19 of the German VAT Act (UStG), no VAT is charged.';
-  const taxText = language === 'fa'
+  const taxText = iran
+    ? [iranTaxNote(iran, language), invoice.public_note].filter(Boolean).join('\n')
+    : language === 'fa'
     ? (invoice.public_note ?? '')
     : language === 'en'
       ? (invoice.currency === 'EUR' ? EN_19 : (invoice.public_note ?? ''))
@@ -109,6 +116,8 @@ export async function issueInvoice(
     due_date: dueDate,
     currency: invoice.currency,
     tax_scenario: invoice.tax_scenario,
+    iran_tax_mode: iran?.mode ?? null,
+    iran_invoice_type: iran?.invoiceType ?? null,
     seller: sellerSnapshot,
     customer: customerSnapshot,
     items: items.map((it) => ({
@@ -123,7 +132,7 @@ export async function issueInvoice(
     })),
     subtotal_cents: doc.lineSubtotalCents,
     discount_cents: doc.discountCents,
-    tax_rate_bp: invoice.tax_scenario === 'KLEINUNTERNEHMER_DE' ? 0 : invoice.tax_rate_bp,
+    tax_rate_bp: rateBp,
     tax_amount_cents: doc.taxCents,
     total_cents: doc.totalCents,
     advance_paid_cents: doc.advancePaidCents,
@@ -150,6 +159,21 @@ export async function issueInvoice(
     idempotencyKey,
   });
 
+  if (iran) {
+    // Persist the authoritative Iranian VAT figures so lists/payments match the PDF.
+    await setFinancials(db, invoiceId, {
+      discountMode: invoice.discount_mode,
+      discountValue: invoice.discount_value,
+      subtotalCents: doc.lineSubtotalCents,
+      globalDiscountCents: doc.discountCents,
+      taxRateBp: rateBp,
+      taxAmountCents: doc.taxCents,
+      totalCents: doc.totalCents,
+      advancePaidCents: doc.advancePaidCents,
+      amountDueCents: doc.amountDueCents,
+    });
+    await setIranTax(db, invoiceId, iran.mode, iran.invoiceType);
+  }
   await markIssuing(db, invoiceId, {
     sellerProfileId: seller.id,
     sellerSnapshot: JSON.stringify(sellerSnapshot),
@@ -197,7 +221,7 @@ export async function issueInvoice(
       subtotalCents: doc.lineSubtotalCents,
       discountCents: doc.discountCents,
       netCents: doc.netCents,
-      taxRateBp: invoice.tax_scenario === 'KLEINUNTERNEHMER_DE' ? 0 : invoice.tax_rate_bp,
+      taxRateBp: rateBp,
       taxCents: doc.taxCents,
       totalCents: doc.totalCents,
       advancePaidCents: doc.advancePaidCents,

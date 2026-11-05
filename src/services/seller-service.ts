@@ -1,3 +1,4 @@
+import { assertIranSellerIssuable, cleanIranIds, isIranCurrency } from './iran-tax';
 import type { z } from 'zod';
 import { sellerProfileSchema, isValidIban } from '../lib/schemas';
 import {
@@ -43,7 +44,14 @@ export async function saveSellerProfile(
     default_rights_text: body.default_rights_text ?? null,
     tax_exemption_text: body.tax_exemption_text,
     invoice_number_prefix: body.invoice_number_prefix,
+    iran_tax_status: body.iran_tax_status,
+    ...cleanIranIds(body),
+    tax_memory_id: body.tax_memory_id?.trim() || null,
+    iran_vat_rate_bp: body.iran_vat_rate_bp,
   };
+  if (input.iran_tax_status === 'VAT_REGISTERED' && !input.economic_code) {
+    throw new AppError('VALIDATION_ERROR', 'economic code required', { economic_code: 'iran_economic_code_required' });
+  }
 
   const prev = await getActiveSeller(db);
   const profile = await createSellerVersion(db, input);
@@ -61,8 +69,14 @@ export async function saveSellerProfile(
  * Validate that the active seller has the tax fields required to issue an
  * invoice (Steuernummer OR USt-IdNr OR Kleinunternehmer-ID + address).
  */
-export function assertSellerIssuable(seller: SellerProfile | null): asserts seller is SellerProfile {
+export function assertSellerIssuable(seller: SellerProfile | null, currency?: string): asserts seller is SellerProfile {
   if (!seller) throw new AppError('SELLER_INCOMPLETE', 'no seller profile');
+  if (isIranCurrency(currency)) {
+    // Iranian invoice: Iranian identity rules instead of German §14 UStG ones.
+    if (!(seller.full_name && seller.street && seller.city)) throw new AppError('SELLER_INCOMPLETE');
+    assertIranSellerIssuable(seller);
+    return;
+  }
   const hasTaxId = Boolean(seller.steuernummer || seller.ust_idnr || seller.kleinunternehmer_id);
   const hasAddress = Boolean(seller.full_name && seller.street && seller.postal_code && seller.city);
   if (!hasTaxId || !hasAddress) throw new AppError('SELLER_INCOMPLETE');
@@ -93,5 +107,9 @@ export function snapshotSeller(s: SellerProfile): Record<string, unknown> {
     logo_r2_key: s.logo_r2_key,
     footer_text: s.footer_text,
     tax_exemption_text: s.tax_exemption_text,
+    iran_tax_status: s.iran_tax_status,
+    national_id: s.national_id,
+    economic_code: s.economic_code,
+    tax_memory_id: s.tax_memory_id,
   };
 }

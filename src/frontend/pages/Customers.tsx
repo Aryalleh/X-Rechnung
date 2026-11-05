@@ -11,13 +11,14 @@ type Form = Record<string, string | number | boolean>;
 const EMPTY: Form = {
   customer_code: '', customer_type: 'BUSINESS', company_name: '', first_name: '', last_name: '', contact_person: '',
   street: '', postal_code: '', city: '', country: 'DE', email: '', phone: '',
-  ust_idnr: '', steuernummer: '', leitweg_id: '', payment_days: '', internal_note: '', is_active: true,
+  ust_idnr: '', steuernummer: '', national_id: '', economic_code: '', leitweg_id: '', payment_days: '', internal_note: '', is_active: true,
 };
-const LTR = new Set(['customer_code', 'email', 'phone', 'ust_idnr', 'steuernummer', 'leitweg_id', 'postal_code', 'country', 'payment_days']);
+const LTR = new Set(['customer_code', 'email', 'phone', 'ust_idnr', 'steuernummer', 'national_id', 'economic_code', 'leitweg_id', 'postal_code', 'country', 'payment_days']);
 const SECTIONS: { key: MsgKey; fields: string[] }[] = [
   { key: 'cust.sec_identity', fields: ['customer_code', 'customer_type', 'company_name', 'first_name', 'last_name', 'contact_person'] },
   { key: 'cust.sec_address', fields: ['street', 'postal_code', 'city', 'country'] },
   { key: 'cust.sec_contact', fields: ['email', 'phone'] },
+  { key: 'cust.sec_iran', fields: ['national_id', 'economic_code'] },
   { key: 'cust.sec_tax', fields: ['ust_idnr', 'steuernummer', 'leitweg_id', 'payment_days', 'internal_note'] },
 ];
 

@@ -111,7 +111,7 @@ interface Labels {
   regards: string;
   fon: string; mail: string; web: string;
   bank: string; iban: string; bic: string;
-  taxNo: string; vatId: string;
+  taxNo: string; vatId: string; nationalId: string; economicCode: string; taxMemory: string;
   pricePrefix: string;
   units: Record<string, string>;
 }
@@ -129,7 +129,7 @@ const L: Record<Lang, Labels> = {
     metaNumber: 'Rechnungsnr', metaDate: 'Datum', metaDelivery: 'Leistungsdatum', metaCustomer: 'Kundennr', metaContact: 'Ansprechpartner',
     payment: (d) => `Bitte überweisen Sie den Rechnungsbetrag unter Angabe der Rechnungsnummer auf das unten angegebene Konto. Der Rechnungsbetrag ist zahlbar bis ${d}.`,
     regards: 'Mit freundlichen Grüßen',
-    fon: 'Fon', mail: 'Mail', web: 'Web', bank: 'Bank', iban: 'IBAN', bic: 'BIC', taxNo: 'St-Nr', vatId: 'USt-IdNr',
+    fon: 'Fon', mail: 'Mail', web: 'Web', bank: 'Bank', iban: 'IBAN', bic: 'BIC', taxNo: 'St-Nr', vatId: 'USt-IdNr', nationalId: 'Nat. ID (IR)', economicCode: 'Wirtschaftscode (IR)', taxMemory: 'Steuerspeicher-ID',
     pricePrefix: 'à ',
     units: { Stunde: 'Std.', Tag: 'Tag', Pauschale: 'Pauschale', Stück: 'Stück', Kilometer: 'km', Projekt: 'Projekt', Minute: 'Min.' },
   },
@@ -145,7 +145,7 @@ const L: Record<Lang, Labels> = {
     metaNumber: 'Invoice no', metaDate: 'Date', metaDelivery: 'Service date', metaCustomer: 'Customer no', metaContact: 'Contact',
     payment: (d) => `Please transfer the invoice amount, quoting the invoice number, to the account below. Payment is due by ${d}.`,
     regards: 'Kind regards',
-    fon: 'Phone', mail: 'Mail', web: 'Web', bank: 'Bank', iban: 'IBAN', bic: 'BIC', taxNo: 'Tax no', vatId: 'VAT ID',
+    fon: 'Phone', mail: 'Mail', web: 'Web', bank: 'Bank', iban: 'IBAN', bic: 'BIC', taxNo: 'Tax no', vatId: 'VAT ID', nationalId: 'National ID (IR)', economicCode: 'Economic code (IR)', taxMemory: 'Tax memory ID',
     pricePrefix: '@ ',
     units: { Stunde: 'h', Tag: 'day', Pauschale: 'flat', Stück: 'pc', Kilometer: 'km', Projekt: 'project', Minute: 'min' },
   },
@@ -161,7 +161,7 @@ const L: Record<Lang, Labels> = {
     metaNumber: 'شماره فاکتور', metaDate: 'تاریخ', metaDelivery: 'تاریخ خدمت', metaCustomer: 'شماره مشتری', metaContact: 'طرف حساب',
     payment: (d) => `لطفاً مبلغ فاکتور را با ذکر شماره فاکتور به حساب زیر واریز کنید. مهلت پرداخت تا ${d} است.`,
     regards: 'با احترام',
-    fon: 'تلفن', mail: 'ایمیل', web: 'وب', bank: 'بانک', iban: 'شبا', bic: 'شناسه بانک', taxNo: 'کد اقتصادی', vatId: 'شناسه مالیاتی',
+    fon: 'تلفن', mail: 'ایمیل', web: 'وب', bank: 'بانک', iban: 'شبا', bic: 'شناسه بانک', taxNo: 'شماره مالیاتی (آلمان)', vatId: 'شناسه ارزش افزوده (اروپا)', nationalId: 'شناسه/کد ملی', economicCode: 'کد اقتصادی', taxMemory: 'شناسه حافظه مالیاتی',
     pricePrefix: '',
     units: { Stunde: 'ساعت', Tag: 'روز', Pauschale: 'مقطوع', Stück: 'عدد', Kilometer: 'کیلومتر', Projekt: 'پروژه', Minute: 'دقیقه' },
   },
@@ -177,6 +177,7 @@ export function renderInvoiceHtml(d: TemplateData): string {
   const t = L[lang];
   const accent = d.accentColor || '#F2EA00';
   const cur = d.currency;
+  const iranCur = ['IRR', 'IRT', 'IRT_NEW'].includes(cur);
   const s = d.seller;
   const c = d.customer;
 
@@ -320,7 +321,7 @@ export function renderInvoiceHtml(d: TemplateData): string {
     padding: 1.4mm 2mm; border-bottom: 1pt solid var(--ink); text-align: ${rtl ? 'right' : 'left'}; }
   .plan-table td { padding: 1.6mm 2mm; border-bottom: 0.3pt solid var(--line); font-size: 9.5pt; }
   .plan-table .amt { text-align: ${rtl ? 'left' : 'right'}; white-space: nowrap; }
-  .tax-note { margin: 5mm 0; padding: 2.5mm 3mm; background: #faf8f0; border-${rtl ? 'right' : 'left'}: 2.5pt solid var(--accent); font-size: 9.5pt; }
+  .tax-note { white-space: pre-line; margin: 5mm 0; padding: 2.5mm 3mm; background: #faf8f0; border-${rtl ? 'right' : 'left'}: 2.5pt solid var(--accent); font-size: 9.5pt; }
   .pay { margin-top: 7mm; max-width: 125mm; }
   .regards { margin-top: 8mm; }
   /* Footer block: right for LTR, LEFT for Persian (RTL flex-end resolves left). */
@@ -346,6 +347,8 @@ export function renderInvoiceHtml(d: TemplateData): string {
           <div>${esc(c.postal_code)} ${esc(c.city)}</div>
           ${c.country && c.country !== 'DE' ? `<div>${esc(c.country)}</div>` : ''}
           ${c.ust_idnr ? `<div>${t.vatId}: ${esc(c.ust_idnr)}</div>` : ''}
+          ${c.national_id ? `<div>${t.nationalId}: ${esc(num(String(c.national_id)))}</div>` : ''}
+          ${c.economic_code ? `<div>${t.economicCode}: ${esc(num(String(c.economic_code)))}</div>` : ''}
           ${c.email ? `<div>${esc(c.email)}</div>` : ''}
         </div>
       </div>
@@ -410,6 +413,9 @@ export function renderInvoiceHtml(d: TemplateData): string {
       <div class="f-gap"></div>
       ${footLine(t.taxNo, s.steuernummer)}
       ${footLine(t.vatId, s.ust_idnr)}
+      ${iranCur ? footLine(t.nationalId, s.national_id) : ''}
+      ${iranCur ? footLine(t.economicCode, s.economic_code) : ''}
+      ${iranCur ? footLine(t.taxMemory, s.tax_memory_id) : ''}
     </div></div>
   </div>
 </body></html>`;

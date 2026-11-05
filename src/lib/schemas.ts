@@ -34,10 +34,16 @@ export const sellerProfileSchema = z.object({
   default_payment_days: z.number().int().min(0).max(365).default(14),
   footer_text: z.string().optional(),
   default_rights_text: z.string().optional(),
-  tax_exemption_text: z.string().min(1, 'tax_text_required'),
+  tax_exemption_text: z.string().min(1, 'tax_text_required').default('Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.'),
   invoice_number_prefix: z.string().min(1).default('RE'),
+  // Iranian tax identity (for rial/toman invoices).
+  iran_tax_status: z.enum(['MICRO', 'VAT_REGISTERED']).default('MICRO'),
+  national_id: z.string().optional(),
+  economic_code: z.string().optional(),
+  tax_memory_id: z.string().optional(),
+  iran_vat_rate_bp: z.number().int().min(0).max(10000).default(1000),
 }).refine(
-  (v) => Boolean(v.steuernummer || v.ust_idnr || v.kleinunternehmer_id),
+  (v) => Boolean(v.steuernummer || v.ust_idnr || v.kleinunternehmer_id || v.national_id || v.economic_code),
   { message: 'tax_id_required', path: ['steuernummer'] },
 );
 
@@ -56,6 +62,8 @@ export const customerSchema = z.object({
   phone: z.string().optional(),
   ust_idnr: z.string().optional(),
   steuernummer: z.string().optional(),
+  national_id: z.string().optional(),
+  economic_code: z.string().optional(),
   leitweg_id: z.string().optional(),
   buyer_reference: z.string().optional(),
   order_reference: z.string().optional(),
@@ -102,6 +110,8 @@ export const invoiceDraftSchema = z.object({
   discount_mode: z.enum(['NONE', 'PERCENT', 'FIXED']).default('NONE'),
   discount_value: z.number().int().min(0).default(0), // PERCENT: basis points; FIXED: minor units
   tax_rate_bp: z.number().int().min(0).max(100000).default(0), // 1900 = 19%
+  // Iranian invoices: 1 = buyer identified (VAT credit), 2 = consumer.
+  iran_invoice_type: z.number().int().min(1).max(2).optional(),
   advance_paid_cents: cents.min(0).default(0),
   installments: z.array(z.object({
     label: z.string().optional(),

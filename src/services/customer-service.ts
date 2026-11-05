@@ -1,3 +1,4 @@
+import { cleanIranIds } from './iran-tax';
 import type { z } from 'zod';
 import { customerSchema } from '../lib/schemas';
 import {
@@ -25,6 +26,7 @@ function toInput(body: CustomerBody, code: string): CustomerInput {
     phone: body.phone ?? null,
     ust_idnr: body.ust_idnr ?? null,
     steuernummer: body.steuernummer ?? null,
+    ...cleanIranIds(body),
     leitweg_id: body.leitweg_id ?? null,
     buyer_reference: body.buyer_reference ?? null,
     order_reference: body.order_reference ?? null,
@@ -72,6 +74,8 @@ export function snapshotCustomer(c: Customer): Record<string, unknown> {
     country: c.country,
     email: c.email,
     ust_idnr: c.ust_idnr,
+    national_id: c.national_id,
+    economic_code: c.economic_code,
     leitweg_id: c.leitweg_id,
     buyer_reference: c.buyer_reference,
   };

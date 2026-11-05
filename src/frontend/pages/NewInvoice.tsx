@@ -39,6 +39,8 @@ export function NewInvoice() {
   const [discountPct, setDiscountPct] = useState('');
   const [discountFixed, setDiscountFixed] = useState(0);
   const [taxRate, setTaxRate] = useState('');
+  const [sellerTax, setSellerTax] = useState<{ status: string; rateBp: number }>({ status: 'MICRO', rateBp: 1000 });
+  const [iranType, setIranType] = useState<1 | 2>(1);
   const [advance, setAdvance] = useState(0);
   const [installments, setInstallments] = useState<{ key: number; due_date: string; amount_cents: number }[]>([]);
   const [invoiceId, setInvoiceId] = useState<string | null>(null);
@@ -48,6 +50,8 @@ export function NewInvoice() {
 
   useEffect(() => {
     api.get<Template[]>('/templates?active=1').then(setTemplates).catch(() => {});
+    api.get<{ iran_tax_status?: string; iran_vat_rate_bp?: number } | null>('/settings/seller')
+      .then((s) => s && setSellerTax({ status: s.iran_tax_status ?? 'MICRO', rateBp: s.iran_vat_rate_bp ?? 1000 })).catch(() => {});
     api.get<{ currency: string; invoice_language: string }>('/settings/general').then((g) => {
       if (g.currency) setCurrency(g.currency);
       if (g.invoice_language === 'fa' || g.invoice_language === 'de' || g.invoice_language === 'en') setLanguage(g.invoice_language);
@@ -77,7 +81,11 @@ export function NewInvoice() {
   const pct = Number(normalizeQty(discountPct)) || 0;
   const discountC = discountMode === 'PERCENT' ? Math.round((subtotal * pct) / 100) : discountMode === 'FIXED' ? Math.min(discountFixed, subtotal) : 0;
   const net = subtotal - discountC;
-  const rate = Number(normalizeQty(taxRate)) || 0;
+  // Toman/rial invoices follow Iranian VAT law: the rate comes from the
+  // seller's registration (micro business → 0, VAT-registered → its rate).
+  const iranCur = ['IRR', 'IRT', 'IRT_NEW'].includes(currency);
+  const iranVat = iranCur && sellerTax.status === 'VAT_REGISTERED';
+  const rate = iranCur ? (iranVat ? sellerTax.rateBp / 100 : 0) : Number(normalizeQty(taxRate)) || 0;
   const taxC = Math.round((net * rate) / 100);
   const grand = net + taxC;
   const due = grand - advance;
@@ -116,6 +124,7 @@ export function NewInvoice() {
       discount_mode: discountMode,
       discount_value: discountMode === 'PERCENT' ? Math.round(pct * 100) : discountMode === 'FIXED' ? discountFixed : 0,
       tax_rate_bp: Math.round(rate * 100),
+      iran_invoice_type: iranVat ? iranType : undefined,
       advance_paid_cents: advance,
       installments: installments.filter((i) => i.amount_cents > 0).map(({ due_date, amount_cents }) => ({ due_date, amount_cents })),
       items: lines.map((it) => ({
@@ -265,9 +274,22 @@ export function NewInvoice() {
                     <MoneyInput id="dfix" value={discountFixed} currency={currency} onChange={setDiscountFixed} />
                   </Field>
                 )}
-                <Field label={t('ni.tax_rate')} hint={t('ni.tax_hint')} htmlFor="tax">
-                  <input id="tax" className="input tabular text-end" dir="ltr" inputMode="decimal" placeholder="0" value={taxRate} onChange={(e) => setTaxRate(e.target.value)} />
-                </Field>
+                {!iranCur ? (
+                  <Field label={t('ni.tax_rate')} hint={t('ni.tax_hint')} htmlFor="tax">
+                    <input id="tax" className="input tabular text-end" dir="ltr" inputMode="decimal" placeholder="0" value={taxRate} onChange={(e) => setTaxRate(e.target.value)} />
+                  </Field>
+                ) : iranVat ? (
+                  <Field label={t('ni.iran_type')} hint={t('ni.iran_vat_hint').replace('{rate}', num(sellerTax.rateBp / 100))} htmlFor="irtype">
+                    <select id="irtype" className="input" value={iranType} onChange={(e) => setIranType(Number(e.target.value) === 2 ? 2 : 1)}>
+                      <option value={1}>{t('ni.iran_type1')}</option>
+                      <option value={2}>{t('ni.iran_type2')}</option>
+                    </select>
+                  </Field>
+                ) : (
+                  <Field label={t('ni.tax_rate')} htmlFor="tax-ir">
+                    <p id="tax-ir" className="rounded-md bg-surface-2 px-3 py-2 text-sm text-muted">{t('ni.iran_micro')}</p>
+                  </Field>
+                )}
                 <Field label={t('ni.advance_paid')} htmlFor="adv">
                   <MoneyInput id="adv" value={advance} currency={currency} onChange={setAdvance} />
                 </Field>
@@ -335,6 +357,12 @@ export function NewInvoice() {
                 <Row label={t('ni.due')} value={money(due, currency, lang)} strong />
               </>}
             </dl>
+            {iranCur && (
+              <p className="mt-3 rounded-md bg-surface-2 px-3 py-2 text-xs text-muted">
+                {iranVat ? (iranType === 1 ? t('ni.iran_type1') : t('ni.iran_type2')) : t('ni.iran_micro')}
+                {' · '}<a href="/settings" className="text-primary-fg hover:underline">{t('ni.iran_change')}</a>
+              </p>
+            )}
             {language === 'de' && currency === 'EUR' && isKlein && (
               <p className="mt-3 rounded-md bg-surface-2 px-3 py-2 text-xs text-muted" dir="ltr" lang="de">Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.</p>
             )}

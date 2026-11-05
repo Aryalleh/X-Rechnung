@@ -29,6 +29,11 @@ export interface SellerProfile {
   default_rights_text: string | null;
   tax_exemption_text: string;
   invoice_number_prefix: string;
+  iran_tax_status: 'MICRO' | 'VAT_REGISTERED';
+  national_id: string | null;
+  economic_code: string | null;
+  tax_memory_id: string | null;
+  iran_vat_rate_bp: number;
   created_at: string;
   updated_at: string;
 }
@@ -62,13 +67,15 @@ export async function createSellerVersion(db: D1Database, input: SellerInput): P
        (id, version, is_active, full_name, business_name, job_title, street, postal_code, city, country,
         email, phone, website, steuernummer, ust_idnr, kleinunternehmer_id, account_holder, iban, bic,
         bank_name, logo_r2_key, signature_r2_key, default_payment_days, footer_text, default_rights_text,
-        tax_exemption_text, invoice_number_prefix)
-     VALUES (?1,?2,1,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26)`,
+        tax_exemption_text, invoice_number_prefix, iran_tax_status, national_id, economic_code,
+        tax_memory_id, iran_vat_rate_bp)
+     VALUES (?1,?2,1,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28,?29,?30,?31)`,
     id, version, input.full_name, input.business_name, input.job_title, input.street, input.postal_code,
     input.city, input.country, input.email, input.phone, input.website, input.steuernummer, input.ust_idnr,
     input.kleinunternehmer_id, input.account_holder, input.iban, input.bic, input.bank_name, input.logo_r2_key,
     input.signature_r2_key, input.default_payment_days, input.footer_text, input.default_rights_text,
-    input.tax_exemption_text, input.invoice_number_prefix,
+    input.tax_exemption_text, input.invoice_number_prefix, input.iran_tax_status, input.national_id,
+    input.economic_code, input.tax_memory_id, input.iran_vat_rate_bp,
   );
   return (await getSellerById(db, id))!;
 }

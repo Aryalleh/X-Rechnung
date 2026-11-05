@@ -86,7 +86,7 @@ const SELLER_SECTIONS: { key: MsgKey; fields: string[] }[] = [
   { key: 'set.sec_tax', fields: ['steuernummer', 'ust_idnr', 'kleinunternehmer_id'] },
   { key: 'set.sec_bank', fields: ['account_holder', 'iban', 'bic', 'bank_name'] },
 ];
-const SELLER_LTR = new Set(['email', 'website', 'iban', 'bic', 'ust_idnr', 'steuernummer', 'phone', 'postal_code', 'country', 'kleinunternehmer_id']);
+const SELLER_LTR = new Set(['national_id', 'economic_code', 'tax_memory_id', 'email', 'website', 'iban', 'bic', 'ust_idnr', 'steuernummer', 'phone', 'postal_code', 'country', 'kleinunternehmer_id']);
 
 function SellerSettings() {
   const i18n = useI18n();
@@ -97,7 +97,7 @@ function SellerSettings() {
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    const defaults = { tax_exemption_text: 'Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.', invoice_number_prefix: 'RE', default_payment_days: 14, country: 'DE' };
+    const defaults = { iran_tax_status: 'MICRO', iran_vat_rate_bp: 1000, tax_exemption_text: 'Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.', invoice_number_prefix: 'RE', default_payment_days: 14, country: 'DE' };
     api.get<Record<string, string | number> | null>('/settings/seller').then((s) => setForm({ ...defaults, ...(s ?? {}) })).catch(() => setForm(defaults));
   }, []);
 
@@ -113,7 +113,33 @@ function SellerSettings() {
     <form className="space-y-5" onSubmit={(e) => { e.preventDefault(); void save(); }}>
       <p className="text-sm text-muted">{t('set.seller_sub')}</p>
       {err && <Alert tone="danger" onClose={() => setErr(null)}>{err}</Alert>}
-      {SELLER_SECTIONS.map((s) => (
+      <Section title={t('set.sec_iran')}>
+        <p className="mb-3 text-xs text-muted">{t('set.iran_sub')}</p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <fieldset className="space-y-2 sm:col-span-2">
+            <legend className="label">{t('f.iran_tax_status')}</legend>
+            {(['MICRO', 'VAT_REGISTERED'] as const).map((v) => (
+              <label key={v} className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 ${form.iran_tax_status === v ? 'border-primary bg-primary-soft' : 'border-line'}`}>
+                <input type="radio" name="iran_tax_status" className="mt-1 accent-[rgb(var(--primary))]" checked={form.iran_tax_status === v} onChange={() => set('iran_tax_status', v)} />
+                <span><span className="block text-sm font-medium">{t(v === 'MICRO' ? 'set.iran_micro' : 'set.iran_vat')}</span>
+                  <span className="block text-xs text-muted">{t(v === 'MICRO' ? 'set.iran_micro_hint' : 'set.iran_vat_hint')}</span></span>
+              </label>
+            ))}
+          </fieldset>
+          {(['national_id', 'economic_code', 'tax_memory_id'] as const).map((k) => (
+            <Field key={k} label={t(`f.${k}`)} htmlFor={`s-${k}`} hint={k === 'national_id' ? t('f.national_id_hint') : undefined}>
+              <input id={`s-${k}`} className="input tabular" dir="ltr" inputMode={k === 'tax_memory_id' ? 'text' : 'numeric'} value={String(form[k] ?? '')} onChange={(e) => set(k, e.target.value)} />
+            </Field>
+          ))}
+          {form.iran_tax_status === 'VAT_REGISTERED' && (
+            <Field label={t('f.iran_vat_rate')} hint={t('f.iran_vat_rate_hint')} htmlFor="s-irrate">
+              <input id="s-irrate" className="input tabular text-end" dir="ltr" inputMode="decimal" value={Number(form.iran_vat_rate_bp ?? 1000) / 100}
+                onChange={(e) => set('iran_vat_rate_bp', Math.round((Number(e.target.value.replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d))).replace(',', '.')) || 0) * 100))} />
+            </Field>
+          )}
+        </div>
+      </Section>
+      {SELLER_SECTIONS.filter((s) => !(i18n.mode === 'fa' && s.key === 'set.sec_tax')).map((s) => (
         <Section key={s.key} title={t(s.key)}>
           <div className="grid gap-3 sm:grid-cols-2">
             {s.fields.map((k) => (

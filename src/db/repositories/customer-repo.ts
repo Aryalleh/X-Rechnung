@@ -18,6 +18,8 @@ export interface Customer {
   phone: string | null;
   ust_idnr: string | null;
   steuernummer: string | null;
+  national_id: string | null;
+  economic_code: string | null;
   leitweg_id: string | null;
   buyer_reference: string | null;
   order_reference: string | null;
@@ -92,12 +94,13 @@ export async function insertCustomer(db: D1Database, input: CustomerInput): Prom
        (id, customer_code, customer_type, company_name, first_name, last_name, contact_person,
         street, postal_code, city, country, email, phone, ust_idnr, steuernummer, leitweg_id,
         buyer_reference, order_reference, payment_days, invoice_language, delivery_method,
-        internal_note, is_active)
-     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23)`,
+        internal_note, is_active, national_id, economic_code)
+     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25)`,
     id, input.customer_code, input.customer_type, input.company_name, input.first_name, input.last_name,
     input.contact_person, input.street, input.postal_code, input.city, input.country, input.email, input.phone,
     input.ust_idnr, input.steuernummer, input.leitweg_id, input.buyer_reference, input.order_reference,
     input.payment_days, input.invoice_language, input.delivery_method, input.internal_note, input.is_active,
+    input.national_id, input.economic_code,
   );
   return (await getCustomerById(db, id))!;
 }
@@ -109,13 +112,14 @@ export async function updateCustomer(db: D1Database, id: string, input: Customer
        customer_code=?2, customer_type=?3, company_name=?4, first_name=?5, last_name=?6, contact_person=?7,
        street=?8, postal_code=?9, city=?10, country=?11, email=?12, phone=?13, ust_idnr=?14, steuernummer=?15,
        leitweg_id=?16, buyer_reference=?17, order_reference=?18, payment_days=?19, invoice_language=?20,
-       delivery_method=?21, internal_note=?22, is_active=?23,
+       delivery_method=?21, internal_note=?22, is_active=?23, national_id=?24, economic_code=?25,
        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
      WHERE id=?1`,
     id, input.customer_code, input.customer_type, input.company_name, input.first_name, input.last_name,
     input.contact_person, input.street, input.postal_code, input.city, input.country, input.email, input.phone,
     input.ust_idnr, input.steuernummer, input.leitweg_id, input.buyer_reference, input.order_reference,
     input.payment_days, input.invoice_language, input.delivery_method, input.internal_note, input.is_active,
+    input.national_id, input.economic_code,
   );
   return (await getCustomerById(db, id))!;
 }

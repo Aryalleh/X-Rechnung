@@ -1,10 +1,11 @@
+import { assertIranBuyerIssuable, iranTreatment, isIranCurrency, type IranTreatment } from './iran-tax';
 import type { z } from 'zod';
 import { invoiceDraftSchema } from '../lib/schemas';
 import { computeTotals, computeDocumentTotals, type LineInput } from '../lib/money';
 import { berlinToday, addDays, yearOf } from '../lib/format';
 import {
   createDraft, updateDraftHeader, replaceDraftItems, getInvoice, getItems,
-  setFinancials, replaceInstallments,
+  setFinancials, replaceInstallments, setIranTax,
   type Invoice, type InvoiceItem,
 } from '../db/repositories/invoice-repo';
 import { getCustomerById, getCustomerByCode } from '../db/repositories/customer-repo';
@@ -41,6 +42,17 @@ function recompute(items: DraftBody['items']): { lines: (LineInput & { total: nu
   return { lines, totals };
 }
 
+/**
+ * Iranian (rial/toman) invoices follow Iranian VAT law, not the German
+ * scenarios: the rate comes from the seller's registration status
+ * (micro business → 0, VAT-registered → configured rate).
+ */
+async function applyIranRules(db: D1Database, body: DraftBody): Promise<{ body: DraftBody; iran: IranTreatment | null }> {
+  if (!isIranCurrency(body.currency)) return { body, iran: null };
+  const iran = iranTreatment(await getActiveSeller(db), body.iran_invoice_type);
+  return { body: { ...body, tax_scenario: 'CUSTOM_TAX_SCENARIO', tax_rate_bp: iran.rateBp }, iran };
+}
+
 /** Compute document-level discount/VAT/advance and persist financials + installments. */
 async function persistFinancials(db: D1Database, id: string, body: DraftBody): Promise<void> {
   const taxRateBp = body.tax_scenario === 'KLEINUNTERNEHMER_DE' ? 0 : body.tax_rate_bp;
@@ -65,7 +77,8 @@ async function persistFinancials(db: D1Database, id: string, body: DraftBody): P
   await replaceInstallments(db, id, body.installments);
 }
 
-export async function createInvoiceDraft(db: D1Database, body: DraftBody, actorEmail: string): Promise<Invoice> {
+export async function createInvoiceDraft(db: D1Database, rawBody: DraftBody, actorEmail: string): Promise<Invoice> {
+  const { body, iran } = await applyIranRules(db, rawBody);
   enforceTaxScenario(body);
   const customerId = await resolveCustomerId(db, body);
   let customerSnapshot: string | null = null;
@@ -112,12 +125,14 @@ export async function createInvoiceDraft(db: D1Database, body: DraftBody, actorE
     { subtotal: totals.subtotalCents, discount: totals.discountCents, total: totals.totalCents },
   );
   await persistFinancials(db, draft.id, body);
+  await setIranTax(db, draft.id, iran?.mode ?? null, iran?.invoiceType ?? null);
 
   await audit(db, { entityType: 'invoice', entityId: draft.id, eventType: 'INVOICE_DRAFT_CREATED', actorEmail });
   return (await getInvoice(db, draft.id))!;
 }
 
-export async function updateInvoiceDraft(db: D1Database, id: string, body: DraftBody, actorEmail: string): Promise<Invoice> {
+export async function updateInvoiceDraft(db: D1Database, id: string, rawBody: DraftBody, actorEmail: string): Promise<Invoice> {
+  const { body, iran } = await applyIranRules(db, rawBody);
   const current = await getInvoice(db, id);
   if (!current) throw new AppError('NOT_FOUND');
   if (current.status !== 'DRAFT') throw new AppError('INVOICE_LOCKED');
@@ -167,6 +182,7 @@ export async function updateInvoiceDraft(db: D1Database, id: string, body: Draft
     { subtotal: totals.subtotalCents, discount: totals.discountCents, total: totals.totalCents },
   );
   await persistFinancials(db, id, body);
+  await setIranTax(db, id, iran?.mode ?? null, iran?.invoiceType ?? null);
 
   await audit(db, { entityType: 'invoice', entityId: id, eventType: 'INVOICE_DRAFT_UPDATED', actorEmail });
   return (await getInvoice(db, id))!;
@@ -196,6 +212,11 @@ export async function assertReadyToIssue(
   if (!invoice.customer_id) throw new AppError('VALIDATION_ERROR', 'customer required', { customer: 'customer_required' });
   const cust = await getCustomerById(db, invoice.customer_id);
   if (!cust) throw new AppError('CUSTOMER_NOT_FOUND');
+  if (isIranCurrency(invoice.currency)) {
+    assertIranBuyerIssuable(cust, iranTreatment(seller, invoice.iran_invoice_type));
+    if (items.length === 0) throw new AppError('VALIDATION_ERROR', 'no line items', { items: 'items_required' });
+    return;
+  }
   const custComplete = Boolean((cust.company_name || cust.last_name) && cust.street && cust.postal_code && cust.city);
   if (!custComplete) throw new AppError('VALIDATION_ERROR', 'customer address incomplete', { customer: 'customer_address_incomplete' });
   if (items.length === 0) throw new AppError('VALIDATION_ERROR', 'no line items', { items: 'items_required' });

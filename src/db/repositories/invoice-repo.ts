@@ -23,6 +23,8 @@ export interface Invoice {
   invoice_language: string;
   currency_snapshot: string | null;
   tax_scenario: TaxScenario;
+  iran_tax_mode: 'MICRO' | 'VAT' | null;
+  iran_invoice_type: number | null;
   subtotal_cents: number;
   discount_cents: number;
   total_cents: number;
@@ -304,4 +306,9 @@ export async function markInstallmentPaid(db: D1Database, id: string, paid: bool
     `UPDATE invoice_installments SET paid=?2, paid_at=CASE WHEN ?2=1 THEN strftime('%Y-%m-%dT%H:%M:%fZ','now') ELSE NULL END WHERE id=?1`,
     id, paid ? 1 : 0,
   );
+}
+
+/** Record the Iranian tax treatment (NULLs for non-Iranian invoices). */
+export async function setIranTax(db: D1Database, id: string, mode: string | null, type: number | null): Promise<void> {
+  await run(db, `UPDATE invoices SET iran_tax_mode = ?2, iran_invoice_type = ?3 WHERE id = ?1`, id, mode, type);
 }
