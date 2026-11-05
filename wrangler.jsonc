@@ -30,12 +30,17 @@
     "binding": "ASSETS",
     "not_found_handling": "single-page-application"
   },
-  // D1 is automatically provisioned by Cloudflare Workers Builds.
-  // Keep the binding name and database name; do not hardcode an account-specific UUID.
+  // D1 database. Explicit database_id so EVERY deploy (incl. Workers Builds)
+  // binds the SAME database that holds the migrated tables. Auto-provisioning
+  // (omitting the id) bound a new EMPTY DB on each build, which caused 500s
+  // because tables like setup_state/app_settings did not exist.
+  //   Create once:  wrangler d1 create x-rechnung --location=weur
+  //   Apply schema: wrangler d1 migrations apply DB --remote
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "x-rechnung",
+      "database_id": "973560a3-e3d7-4cd2-9799-05c6e598d827",
       "migrations_dir": "migrations"
     }
   ],
