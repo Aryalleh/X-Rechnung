@@ -62,8 +62,12 @@ app.notFound((c) => fail(c, new AppError('NOT_FOUND'), c.env.ENVIRONMENT));
 
 // Serve the SPA for all non-API routes via the ASSETS binding.
 app.get('*', async (c) => {
+  if (c.req.path.startsWith('/api/')) {
+    return fail(c, new AppError('NOT_FOUND'), c.env.ENVIRONMENT);
+  }
+  // Re-wrap: ASSETS responses have immutable headers.
   const res = await c.env.ASSETS.fetch(c.req.raw);
-  return res;
+  return new Response(res.body, res);
 });
 
 export default {

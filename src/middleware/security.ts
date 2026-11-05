@@ -10,6 +10,9 @@ import { AppError } from '../lib/errors';
  */
 export const securityHeaders: MiddlewareHandler<HonoEnv> = async (c, next) => {
   await next();
+  // Responses from fetch()/ASSETS.fetch() have immutable headers; re-wrap so
+  // we can set security headers without "Can't modify immutable headers".
+  c.res = new Response(c.res.body, c.res);
   const h = c.res.headers;
   h.set(
     'Content-Security-Policy',

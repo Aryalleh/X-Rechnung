@@ -40,7 +40,7 @@
     {
       "binding": "DB",
       "database_name": "x-rechnung",
-      "database_id": "973560a3-e3d7-4cd2-9799-05c6e598d827",
+      "database_id": "8c1ff9c7-356f-4537-9550-de64cbe07ba1",
       "migrations_dir": "migrations"
     }
   ],
