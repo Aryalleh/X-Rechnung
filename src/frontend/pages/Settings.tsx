@@ -3,7 +3,7 @@ import { NavLink, Routes, Route, Navigate } from 'react-router-dom';
 import { api } from '../api';
 import { errorText, useI18n } from '../i18n';
 import type { InstallMode, Lang, MsgKey } from '../i18n';
-import { Alert, Badge, EmptyState, Field, Icon, Loading, Options, PageHeader, Section, Spinner, useToast } from '../ui';
+import { Alert, Badge, EmptyState, Field, Icon, Loading, Modal, Options, PageHeader, PasswordInput, Section, Spinner, useToast } from '../ui';
 import type { IconName } from '../ui';
 
 /* Labels for generic settings keys (per language). Unknown keys are humanized. */
@@ -69,7 +69,7 @@ export function Settings() {
             <Route path="general" element={<GenericGroup title={t('set.general')} path="/settings/general" hide={['invoice_mode', 'currency', 'invoice_language']} />} />
             <Route path="invoice" element={<GenericGroup title={t('set.invoice')} path="/settings/invoice" />} />
             <Route path="einvoice" element={<GenericGroup title={t('set.einvoice')} path="/settings/einvoice" />} />
-            <Route path="users" element={<Users />} />
+            <Route path="users" element={<><Users /><div className="mt-5"><GenericGroup title={t('team.email_title')} path="/settings/group/EMAIL_OUTBOUND" /></div></>} />
             <Route path="cloudflare" element={<GenericGroup title={t('set.cloudflare')} path="/settings/cloudflare" readOnly />} />
             <Route path="status" element={<SystemStatus />} />
             <Route path="*" element={<Navigate to="." replace />} />
@@ -85,8 +85,9 @@ const SELLER_SECTIONS: { key: MsgKey; fields: string[] }[] = [
   { key: 'set.sec_address', fields: ['street', 'postal_code', 'city', 'country', 'email', 'phone', 'website'] },
   { key: 'set.sec_tax', fields: ['steuernummer', 'ust_idnr', 'kleinunternehmer_id'] },
   { key: 'set.sec_bank', fields: ['account_holder', 'iban', 'bic', 'bank_name'] },
+  { key: 'set.sec_bank_ir', fields: ['iran_account_holder', 'iran_bank_name', 'shaba', 'iran_card_number'] },
 ];
-const SELLER_LTR = new Set(['national_id', 'economic_code', 'tax_memory_id', 'email', 'website', 'iban', 'bic', 'ust_idnr', 'steuernummer', 'phone', 'postal_code', 'country', 'kleinunternehmer_id']);
+const SELLER_LTR = new Set(['shaba', 'iran_card_number', 'national_id', 'economic_code', 'tax_memory_id', 'email', 'website', 'iban', 'bic', 'ust_idnr', 'steuernummer', 'phone', 'postal_code', 'country', 'kleinunternehmer_id']);
 
 function SellerSettings() {
   const i18n = useI18n();
@@ -290,54 +291,206 @@ function GenericGroup({ title, path, readOnly, hide = [] }: { title: string; pat
 }
 
 const ROLES = ['ADMIN', 'ACCOUNTANT', 'READ_ONLY'] as const;
+/** What each role may do (mirrors requireRole() checks on the server). */
+const PERMS: Record<string, string[]> = {
+  OWNER: ['FULL_ACCESS', 'MANAGE_USERS', 'ISSUE_INVOICE', 'MANAGE_CONTRACTS'],
+  ADMIN: ['ISSUE_INVOICE', 'MANAGE_CUSTOMERS', 'MANAGE_CONTRACTS', 'SETTINGS'],
+  ACCOUNTANT: ['ISSUE_INVOICE', 'MANAGE_CUSTOMERS', 'READ_REPORTS'],
+  READ_ONLY: ['READ_REPORTS'],
+};
 
 function Users() {
   const i18n = useI18n();
   const { t, tx, date } = i18n;
   const toast = useToast();
-  const [rows, setRows] = useState<{ id: string; email: string; role: string; status: string; last_login_at: string | null }[] | null>(null);
-  const [form, setForm] = useState({ email: '', full_name: '', role: 'ADMIN' });
+  type Row = { id: string; email: string; full_name: string | null; role: string; status: string; last_login_at: string | null; has_password: number };
+  const [rows, setRows] = useState<Row[] | null>(null);
+  const [me, setMe] = useState<{ email: string; role: string; hasPassword: boolean } | null>(null);
+  const [form, setForm] = useState({ email: '', full_name: '', role: 'ADMIN', password: '' });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const load = () => api.get<NonNullable<typeof rows>>('/settings/users').then(setRows).catch(() => setRows([]));
-  useEffect(() => { void load(); }, []);
+  const [pwFor, setPwFor] = useState<Row | null>(null);
+  const load = () => api.get<Row[]>('/settings/users').then(setRows).catch(() => setRows([]));
+  useEffect(() => { void load(); api.get<NonNullable<typeof me>>('/auth/me').then(setMe).catch(() => undefined); }, []);
+  const isOwner = me?.role === 'OWNER';
+
+  async function patch(r: Row, what: 'role' | 'status', value: string) {
+    setErr(null);
+    try { await api.put(`/settings/users/${r.id}/${what}`, { [what]: value }); toast(t('common.saved')); await load(); }
+    catch (e) { setErr(errorText(e, i18n)); }
+  }
 
   async function add() {
     setErr(null); setBusy(true);
-    try { await api.post('/settings/users', form); setForm({ email: '', full_name: '', role: 'ADMIN' }); toast(t('common.saved')); await load(); }
-    catch (e) { setErr(errorText(e, i18n)); } finally { setBusy(false); }
+    try {
+      await api.post('/settings/users', form);
+      setForm({ email: '', full_name: '', role: 'ADMIN', password: '' }); toast(t('common.saved')); await load();
+    } catch (e) { setErr(errorText(e, i18n)); } finally { setBusy(false); }
   }
 
   return (
     <div className="space-y-5">
       {err && <Alert tone="danger" onClose={() => setErr(null)}>{err}</Alert>}
+      {me && <MyPassword hasPassword={me.hasPassword} onChanged={() => setMe({ ...me, hasPassword: true })} />}
       <section className="card overflow-hidden">
-        <div className="border-b border-line px-5 py-3"><h2 className="section-title">{t('set.users')}</h2></div>
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-5 py-3">
+          <h2 className="section-title">{t('team.members')}</h2>
+          {isOwner && <a href="#invite" className="btn-primary btn-sm"><Icon name="plus" />{t('team.invite')}</a>}
+        </div>
         {!rows ? <Loading /> : (
           <div className="overflow-x-auto">
             <table className="data">
-              <thead><tr><th>{t('set.user_email')}</th><th>{t('set.user_role')}</th><th>{t('set.user_status')}</th><th className="max-sm:hidden">{t('set.user_last_login')}</th></tr></thead>
+              <thead><tr>
+                <th>{t('team.user')}</th><th>{t('set.user_role')}</th><th className="max-xl:hidden">{t('team.permissions')}</th><th>{t('set.user_status')}</th>
+                <th>{t('set.user_login')}</th><th className="max-sm:hidden">{t('set.user_last_login')}</th>
+                {isOwner && <th><span className="sr-only">{t('set.user_set_pw')}</span></th>}
+              </tr></thead>
               <tbody>{rows.map((r) => (
                 <tr key={r.id}>
-                  <td dir="ltr" className="text-start">{r.email}</td>
-                  <td>{tx(`role.${r.role}`, r.role)}</td>
-                  <td><Badge tone={r.status === 'ACTIVE' ? 'success' : 'neutral'}>{tx(`ustatus.${r.status}`, r.status)}</Badge></td>
+                  <td>
+                    <div className="flex items-center gap-2.5">
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-soft text-xs font-semibold text-primary-fg">{(r.full_name || r.email).slice(0, 1).toUpperCase()}</span>
+                      <div className="min-w-0">
+                        {r.full_name && <div className="truncate font-medium" dir="auto">{r.full_name}</div>}
+                        <div className="truncate text-xs text-muted" dir="ltr">{r.email}{me?.email === r.email ? ` · ${t('team.you')}` : ''}</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td>
+                    {isOwner && r.role !== 'OWNER' ? (
+                      <select className="input h-9 w-auto py-0" aria-label={`${t('set.user_role')}: ${r.email}`} value={r.role} onChange={(e) => void patch(r, 'role', e.target.value)}>
+                        <Options values={ROLES} prefix="role." />
+                      </select>
+                    ) : tx(`role.${r.role}`, r.role)}
+                  </td>
+                  <td className="max-xl:hidden">
+                    <div className="flex max-w-[18rem] flex-wrap gap-1">
+                      {(PERMS[r.role] ?? []).map((p) => <span key={p} className="whitespace-nowrap rounded bg-surface-2 px-1.5 py-0.5 text-[11px] text-muted" title={p}>{t(`perm.${p}` as MsgKey)}</span>)}
+                    </div>
+                  </td>
+                  <td>
+                    {isOwner && me?.email !== r.email ? (
+                      <button className={`badge ${r.status === 'ACTIVE' ? 'bg-success-soft text-success' : 'bg-surface-2 text-muted'} hover:ring-1 hover:ring-line-strong`}
+                        title={r.status === 'ACTIVE' ? t('team.disable') : t('team.enable')}
+                        onClick={() => void patch(r, 'status', r.status === 'ACTIVE' ? 'DISABLED' : 'ACTIVE')}>{tx(`ustatus.${r.status}`, r.status)}</button>
+                    ) : <Badge tone={r.status === 'ACTIVE' ? 'success' : 'neutral'}>{tx(`ustatus.${r.status}`, r.status)}</Badge>}
+                  </td>
+                  <td><Badge tone={r.has_password ? 'success' : 'warning'}>{t(r.has_password ? 'set.user_has_pw' : 'set.user_no_pw')}</Badge></td>
                   <td className="max-sm:hidden text-muted">{r.last_login_at ? date(r.last_login_at) : '—'}</td>
+                  {isOwner && (
+                    <td className="text-end">
+                      <button className="btn-secondary h-9 whitespace-nowrap" onClick={() => setPwFor(r)}><Icon name="lock" />{t('set.user_set_pw')}</button>
+                    </td>
+                  )}
                 </tr>
               ))}</tbody>
             </table>
           </div>
         )}
       </section>
-      <Section title={t('set.users_add')}>
-        <form className="grid gap-3 sm:grid-cols-4 sm:items-end" onSubmit={(e) => { e.preventDefault(); void add(); }}>
-          <Field label={t('set.user_email')} htmlFor="u-e"><input id="u-e" type="email" required className="input" dir="ltr" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
-          <Field label={t('set.user_name')} htmlFor="u-n"><input id="u-n" className="input" dir="auto" value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} /></Field>
-          <Field label={t('set.user_role')} htmlFor="u-r"><select id="u-r" className="input" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}><Options values={ROLES} prefix="role." /></select></Field>
-          <button className="btn-primary" disabled={busy}>{busy ? <Spinner /> : <Icon name="plus" />}{t('set.users_add')}</button>
-        </form>
-      </Section>
+      {isOwner && (
+        <div id="invite" className="scroll-mt-24">
+        <Section title={t('set.users_add')}>
+          <form className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 lg:items-end" onSubmit={(e) => { e.preventDefault(); void add(); }}>
+            <Field label={t('set.user_email')} htmlFor="u-e"><input id="u-e" type="email" required className="input" dir="ltr" autoComplete="off" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
+            <Field label={t('set.user_name')} htmlFor="u-n"><input id="u-n" className="input" dir="auto" value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} /></Field>
+            <Field label={t('set.user_role')} htmlFor="u-r"><select id="u-r" className="input" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}><Options values={ROLES} prefix="role." /></select></Field>
+            <Field label={t('set.user_password')} htmlFor="u-p">
+              <PasswordInput id="u-p" value={form.password} onChange={(v) => setForm({ ...form, password: v })} autoComplete="new-password" minLength={10} />
+            </Field>
+            <p className="text-xs text-muted sm:col-span-2 lg:col-span-3">{t('set.pw_hint')}</p>
+            <button className="btn-primary justify-center" disabled={busy}>{busy ? <Spinner /> : <Icon name="plus" />}{t('set.users_add')}</button>
+          </form>
+        </Section>
+        </div>
+      )}
+      <section className="card card-pad">
+        <h2 className="section-title mb-2 flex items-center gap-2"><Icon name="info" className="h-4 w-4 text-muted" />{t('team.logic_title')}</h2>
+        <ul className="list-disc space-y-1 ps-5 text-sm text-muted">
+          <li>{t('team.logic_1')}</li>
+          <li>{t('team.logic_2')}</li>
+          <li>{t('team.logic_3')}</li>
+        </ul>
+      </section>
+      {pwFor && <SetUserPassword row={pwFor} onClose={() => setPwFor(null)} onSaved={() => { setPwFor(null); toast(t('set.pw_set')); void load(); }} />}
     </div>
+  );
+}
+
+/** Change own password (current password required once one is set). */
+function MyPassword({ hasPassword, onChanged }: { hasPassword: boolean; onChanged: () => void }) {
+  const i18n = useI18n();
+  const { t } = i18n;
+  const toast = useToast();
+  const [f, setF] = useState({ current: '', next: '', confirm: '' });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const mismatch = Boolean(f.confirm && f.confirm !== f.next);
+
+  async function save() {
+    if (f.next !== f.confirm) { setErr(t('set.pw_mismatch')); return; }
+    setErr(null); setBusy(true);
+    try {
+      await api.post('/auth/password', { current_password: f.current || undefined, new_password: f.next });
+      setF({ current: '', next: '', confirm: '' }); toast(t('set.pw_changed')); onChanged();
+    } catch (e) { setErr(errorText(e, i18n)); } finally { setBusy(false); }
+  }
+
+  return (
+    <Section title={t('set.my_password')} icon="lock">
+      <p className="mb-3 text-xs text-muted">{t('set.my_password_sub')}</p>
+      {err && <div className="mb-3" role="alert"><Alert tone="danger" onClose={() => setErr(null)}>{err}</Alert></div>}
+      <form className="grid gap-3 sm:grid-cols-3 sm:items-start" onSubmit={(e) => { e.preventDefault(); void save(); }}>
+        {hasPassword && (
+          <Field label={t('set.pw_current')} htmlFor="mp-c">
+            <PasswordInput id="mp-c" value={f.current} onChange={(v) => setF({ ...f, current: v })} autoComplete="current-password" required />
+          </Field>
+        )}
+        <Field label={t('set.pw_new')} htmlFor="mp-n" hint={t('set.pw_hint')}>
+          <PasswordInput id="mp-n" value={f.next} onChange={(v) => setF({ ...f, next: v })} autoComplete="new-password" required minLength={10} />
+        </Field>
+        <Field label={t('set.pw_confirm')} htmlFor="mp-r" error={mismatch ? t('set.pw_mismatch') : undefined}>
+          <PasswordInput id="mp-r" value={f.confirm} onChange={(v) => setF({ ...f, confirm: v })} autoComplete="new-password" required minLength={10} invalid={mismatch} />
+        </Field>
+        <div className="flex justify-end sm:col-span-3">
+          <button className="btn-primary" disabled={busy || !f.next || mismatch}>{busy ? <Spinner /> : <Icon name="check" />}{t('set.pw_change')}</button>
+        </div>
+      </form>
+    </Section>
+  );
+}
+
+/** Owner sets / resets another user's password (signs that user out). */
+function SetUserPassword({ row, onClose, onSaved }: { row: { id: string; email: string }; onClose: () => void; onSaved: () => void }) {
+  const i18n = useI18n();
+  const { t } = i18n;
+  const [pw, setPw] = useState('');
+  const [pw2, setPw2] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const mismatch = Boolean(pw2 && pw2 !== pw);
+  async function save() {
+    if (pw !== pw2) { setErr(t('set.pw_mismatch')); return; }
+    setErr(null); setBusy(true);
+    try { await api.put(`/settings/users/${row.id}/password`, { password: pw }); onSaved(); }
+    catch (e) { setErr(errorText(e, i18n)); } finally { setBusy(false); }
+  }
+  return (
+    <Modal open onClose={onClose} title={t('set.user_set_pw_title', { email: row.email })}
+      footer={<>
+        <button className="btn-secondary" onClick={onClose}>{t('common.cancel')}</button>
+        <button className="btn-primary" form="set-user-pw" disabled={busy || !pw || mismatch}>{busy ? <Spinner /> : <Icon name="lock" />}{t('common.save')}</button>
+      </>}>
+      <form id="set-user-pw" className="space-y-3" onSubmit={(e) => { e.preventDefault(); void save(); }}>
+        {err && <div role="alert"><Alert tone="danger" onClose={() => setErr(null)}>{err}</Alert></div>}
+        <Field label={t('set.pw_new')} htmlFor="sp-n" hint={t('set.pw_hint')}>
+          <PasswordInput id="sp-n" value={pw} onChange={setPw} autoComplete="new-password" required minLength={10} />
+        </Field>
+        <Field label={t('set.pw_confirm')} htmlFor="sp-r" error={mismatch ? t('set.pw_mismatch') : undefined}>
+          <PasswordInput id="sp-r" value={pw2} onChange={setPw2} autoComplete="new-password" required minLength={10} invalid={mismatch} />
+        </Field>
+      </form>
+    </Modal>
   );
 }
 

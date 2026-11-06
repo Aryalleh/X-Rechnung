@@ -26,6 +26,8 @@
   --danger-soft: 254 226 226;
   --info: 3 105 161;
   --info-soft: 224 242 254;
+  --chart-1: 79 70 229;
+  --chart-2: 13 148 136;
   --font-sans: 'Inter Variable', 'Vazirmatn Variable', system-ui, -apple-system, 'Segoe UI', sans-serif;
   color-scheme: light;
 }
@@ -53,6 +55,8 @@ html[dir='rtl'] {
   --danger-soft: 69 10 10;
   --info: 56 189 248;
   --info-soft: 8 47 73;
+  --chart-1: 99 102 241;
+  --chart-2: 13 148 136;
   color-scheme: dark;
 }
 

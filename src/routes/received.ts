@@ -10,7 +10,7 @@ import {
   listReceivedInvoices, getReceivedInvoice, getReceivedFiles, getReceivedItems, getValidationResults,
 } from '../db/repositories/received-repo';
 import { run } from '../db/client';
-import { audit } from '../services/audit-service';
+import { audit, listAudit } from '../services/audit-service';
 
 export const receivedRoutes = new Hono<HonoEnv>();
 
@@ -21,12 +21,13 @@ receivedRoutes.get('/', async (c) => {
 receivedRoutes.get('/:id', async (c) => {
   const inv = await getReceivedInvoice(c.env.DB, c.req.param('id'));
   if (!inv) throw new AppError('NOT_FOUND');
-  const [files, items, validations] = await Promise.all([
+  const [files, items, validations, history] = await Promise.all([
     getReceivedFiles(c.env.DB, c.req.param('id')),
     getReceivedItems(c.env.DB, c.req.param('id')),
     getValidationResults(c.env.DB, c.req.param('id')),
+    listAudit(c.env.DB, 50, { entityType: 'received_invoice', entityId: c.req.param('id') }),
   ]);
-  return ok(c, { invoice: inv, files, items, validations });
+  return ok(c, { invoice: inv, files, items, validations, history });
 });
 
 /** Manual upload of .xml / .pdf / (.eml). Signature-checked; never trusts MIME. */
@@ -63,5 +64,16 @@ receivedRoutes.post('/:id/duplicate-decision', async (c) => {
     c.req.param('id'), `${decision}: ${reason}`,
   );
   await audit(c.env.DB, { entityType: 'received_invoice', entityId: c.req.param('id'), eventType: 'DUPLICATE_DECISION', actorEmail: c.get('actor')!.email, metadata: { decision, reason } });
+  return ok(c, { saved: true });
+});
+
+/** Mark a received invoice as unpaid / partially paid / paid (bookkeeping only, no bank action). */
+receivedRoutes.put('/:id/payment-status', async (c) => {
+  const { status } = await c.req.json<{ status: string }>();
+  if (!['UNPAID', 'PARTIALLY_PAID', 'PAID'].includes(status)) throw new AppError('VALIDATION_ERROR', 'invalid payment status');
+  const inv = await getReceivedInvoice(c.env.DB, c.req.param('id'));
+  if (!inv) throw new AppError('NOT_FOUND');
+  await run(c.env.DB, `UPDATE received_invoices SET payment_status = ?2 WHERE id = ?1`, c.req.param('id'), status);
+  await audit(c.env.DB, { entityType: 'received_invoice', entityId: c.req.param('id'), eventType: 'PAYMENT_STATUS_CHANGED', actorEmail: c.get('actor')!.email, metadata: { from: (inv as { payment_status?: string }).payment_status, to: status } });
   return ok(c, { saved: true });
 });

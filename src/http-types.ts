@@ -1,10 +1,15 @@
 import type { Env } from './config/env';
 
-/** Authenticated actor derived from the Cloudflare Access JWT. */
+/** Authenticated actor: from a password session or a Cloudflare Access JWT. */
 export interface Actor {
   email: string;
   role: 'OWNER' | 'ADMIN' | 'ACCOUNTANT' | 'READ_ONLY';
   identityId?: string;
+  /** admin_users.id (set for password sessions). */
+  userId?: string;
+  /** Hashed session id (set for password sessions). */
+  sessionId?: string;
+  via?: 'session' | 'access' | 'dev';
 }
 
 /** Hono generic bindings + per-request variables. */

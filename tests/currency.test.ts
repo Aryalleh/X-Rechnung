@@ -54,3 +54,21 @@ describe('redenomination (حذف صفر)', () => {
     expect(getCurrency('ZZZ').code).toBe('EUR');
   });
 });
+
+import { convertPrice, marketOf } from '../src/frontend/currency';
+describe('template market separation', () => {
+  it('maps currencies to markets', () => {
+    expect(marketOf('EUR')).toBe('DE');
+    expect(marketOf('IRT')).toBe('IR');
+    expect(marketOf('IRR')).toBe('IR');
+    expect(marketOf('IRT_NEW')).toBe('IR');
+  });
+  it('converts Iranian template prices between rial, toman and the new unit', () => {
+    expect(convertPrice(500_000, 'IRT', 'IRR')).toBe(5_000_000);
+    expect(convertPrice(5_000_000, 'IRR', 'IRT')).toBe(500_000);
+    expect(convertPrice(500_000, 'IRT', 'IRT_NEW')).toBe(50_000); // 500 000 toman = 5 000 000 rial = 500 new units = 50 000 qeran
+  });
+  it('never converts EUR', () => {
+    expect(convertPrice(20_000, 'EUR', 'IRT')).toBe(20_000);
+  });
+});

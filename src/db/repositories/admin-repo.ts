@@ -13,14 +13,20 @@ export interface AdminUser {
   last_login_at: string | null;
   created_at: string;
   updated_at: string;
+  /** 1 when a password is set (never the hash itself). */
+  has_password: number;
 }
 
+/** Public columns only — password_hash / lockout state never leave the auth service. */
+const COLS = `id, email, full_name, recovery_email, role, status, access_identity_id, access_synced_at,
+  last_login_at, created_at, updated_at, (password_hash IS NOT NULL) AS has_password`;
+
 export function findAdminByEmail(db: D1Database, email: string): Promise<AdminUser | null> {
-  return one<AdminUser>(db, `SELECT * FROM admin_users WHERE lower(email) = lower(?1)`, email);
+  return one<AdminUser>(db, `SELECT ${COLS} FROM admin_users WHERE lower(email) = lower(?1)`, email);
 }
 
 export function listAdmins(db: D1Database): Promise<AdminUser[]> {
-  return all<AdminUser>(db, `SELECT * FROM admin_users ORDER BY created_at ASC`);
+  return all<AdminUser>(db, `SELECT ${COLS} FROM admin_users ORDER BY created_at ASC`);
 }
 
 export async function createAdmin(
@@ -38,7 +44,7 @@ export async function createAdmin(
     input.recovery_email ?? null,
     input.role,
   );
-  return (await one<AdminUser>(db, `SELECT * FROM admin_users WHERE id = ?1`, id))!;
+  return (await one<AdminUser>(db, `SELECT ${COLS} FROM admin_users WHERE id = ?1`, id))!;
 }
 
 export async function countActiveOwners(db: D1Database): Promise<number> {

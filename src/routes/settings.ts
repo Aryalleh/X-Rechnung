@@ -10,6 +10,8 @@ import { sellerProfileSchema, emailChannelSchema } from '../lib/schemas';
 import { getGroup, setSetting } from '../db/repositories/settings-repo';
 import { getGeneralSettings, getInvoiceSettings, getEInvoiceSettings } from '../services/settings-service';
 import { saveSellerProfile } from '../services/seller-service';
+import { assertPasswordPolicy, revokeSessions, setPassword } from '../services/auth-service';
+import { PASSWORD_MAX } from '../lib/password';
 import { getActiveSeller, listSellerVersions } from '../db/repositories/seller-repo';
 import {
   listAdmins, createAdmin, updateAdminRole, setAdminStatus, countActiveOwners, findAdminByEmail,
@@ -98,16 +100,37 @@ settingsRoutes.put('/einvoice', async (c) => {
 // ------------------------------- Users ----------------------------------
 settingsRoutes.get('/users', async (c) => ok(c, await listAdmins(c.env.DB)));
 settingsRoutes.post('/users', requireRole('OWNER'), async (c) => {
-  const body = await parseBody(c, z.object({ email: z.string().email(), full_name: z.string().optional(), role: z.enum(['ADMIN', 'ACCOUNTANT', 'READ_ONLY']) }));
-  const created = await createAdmin(c.env.DB, body);
+  const body = await parseBody(c, z.object({ email: z.string().email(), full_name: z.string().optional(), role: z.enum(['ADMIN', 'ACCOUNTANT', 'READ_ONLY']), password: z.string().max(PASSWORD_MAX).optional().or(z.literal('')) }));
+  if (body.password) assertPasswordPolicy(body.password, body.email);
+  if (await findAdminByEmail(c.env.DB, body.email)) throw new AppError('CONFLICT', 'user exists', { email: 'user_exists' });
+  const created = await createAdmin(c.env.DB, { email: body.email, role: body.role, ...(body.full_name ? { full_name: body.full_name } : {}) });
+  if (body.password) await setPassword(c.env.DB, created.id, body.password);
   await audit(c.env.DB, { entityType: 'admin_user', entityId: created.id, eventType: 'ADMIN_USER_CREATED', actorEmail: c.get('actor')!.email, metadata: { role: body.role } });
   return ok(c, created, 201);
 });
 settingsRoutes.put('/users/:id/role', requireRole('OWNER'), async (c) => {
   const body = await parseBody(c, z.object({ role: z.enum(['OWNER', 'ADMIN', 'ACCOUNTANT', 'READ_ONLY']) }));
+  // Ownership only moves through the verified transfer flow; an owner is never demoted here.
+  const target = await one<{ role: string }>(c.env.DB, `SELECT role FROM admin_users WHERE id=?1`, c.req.param('id'));
+  if (!target) throw new AppError('NOT_FOUND');
+  if (body.role === 'OWNER' || target.role === 'OWNER') throw new AppError('CONFLICT', 'use the ownership transfer to change the owner');
   await updateAdminRole(c.env.DB, c.req.param('id'), body.role);
+  await audit(c.env.DB, { entityType: 'admin_user', entityId: c.req.param('id'), eventType: 'ADMIN_ROLE_CHANGED', actorEmail: c.get('actor')!.email, metadata: { from: target.role, to: body.role } });
   return ok(c, { updated: true });
 });
+/** Owner sets / resets another user's password; signs that user out everywhere. */
+settingsRoutes.put('/users/:id/password', requireRole('OWNER'), async (c) => {
+  const body = await parseBody(c, z.object({ password: z.string().max(PASSWORD_MAX) }));
+  const target = await one<{ id: string; email: string }>(c.env.DB, `SELECT id, email FROM admin_users WHERE id=?1`, c.req.param('id'));
+  if (!target) throw new AppError('NOT_FOUND');
+  assertPasswordPolicy(body.password, target.email);
+  await setPassword(c.env.DB, target.id, body.password);
+  const actor = c.get('actor')!;
+  await revokeSessions(c.env.DB, target.id, target.email === actor.email ? actor.sessionId : undefined);
+  await audit(c.env.DB, { entityType: 'admin_user', entityId: target.id, eventType: 'PASSWORD_RESET', actorEmail: actor.email });
+  return ok(c, { updated: true });
+});
+
 settingsRoutes.put('/users/:id/status', requireRole('OWNER'), async (c) => {
   const body = await parseBody(c, z.object({ status: z.enum(['ACTIVE', 'DISABLED']) }));
   // Never disable the last active owner.
@@ -117,6 +140,7 @@ settingsRoutes.put('/users/:id/status', requireRole('OWNER'), async (c) => {
     if (owners <= 1) throw new AppError('CONFLICT', 'cannot disable the last owner');
   }
   await setAdminStatus(c.env.DB, c.req.param('id'), body.status);
+  if (body.status === 'DISABLED') await revokeSessions(c.env.DB, c.req.param('id'));
   await audit(c.env.DB, { entityType: 'admin_user', entityId: c.req.param('id'), eventType: body.status === 'DISABLED' ? 'ADMIN_USER_DISABLED' : 'ADMIN_USER_ENABLED', actorEmail: c.get('actor')!.email });
   return ok(c, { updated: true });
 });

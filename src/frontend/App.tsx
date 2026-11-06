@@ -14,7 +14,11 @@ import { NewInvoice } from './pages/NewInvoice';
 import { InvoiceDetail } from './pages/InvoiceDetail';
 import { Invoices } from './pages/Invoices';
 import { Inbox } from './pages/Inbox';
+import { InboxDetail } from './pages/InboxDetail';
 import { Settings } from './pages/Settings';
+import { Login } from './pages/Login';
+import { Contracts } from './pages/Contracts';
+import { SignContract } from './pages/SignContract';
 
 interface Bootstrap {
   setupState: string;
@@ -44,6 +48,15 @@ export function App() {
   if (!boot) return <div className="flex min-h-screen items-center justify-center text-muted"><Spinner className="h-6 w-6" /></div>;
 
   const isSetup = boot.setupState !== 'ACTIVE';
+  // Public contract signing link: no login, own language handling.
+  const signMatch = /^\/sign\/([A-Za-z0-9_-]{20,128})\/?$/.exec(window.location.pathname);
+  if (signMatch && !isSetup) {
+    return (
+      <I18nProvider initialMode={boot.invoiceMode} serverLocale={boot.locale}>
+        <ToastProvider><SignContract token={signMatch[1]!} /></ToastProvider>
+      </I18nProvider>
+    );
+  }
   return (
     <I18nProvider initialMode={isSetup ? null : boot.invoiceMode} serverLocale={boot.locale}>
       <ToastProvider>
@@ -53,11 +66,28 @@ export function App() {
             <Route path="*" element={<Navigate to="/setup" replace />} />
           </Routes>
         ) : (
-          <Shell appName={boot.appName} />
+          <AuthGate appName={boot.appName} />
         )}
       </ToastProvider>
     </I18nProvider>
   );
+}
+
+export interface Me { email: string; role: string; fullName: string | null; via: string | null; hasPassword: boolean }
+
+/** Shows the login page until /auth/me succeeds; returns to it on any 401. */
+function AuthGate({ appName }: { appName: string }) {
+  const [me, setMe] = useState<Me | null | undefined>(undefined);
+  const check = () => { api.get<Me>('/auth/me').then(setMe).catch(() => setMe(null)); };
+  useEffect(check, []);
+  useEffect(() => {
+    const onUnauth = () => setMe(null);
+    window.addEventListener('xr:unauthorized', onUnauth);
+    return () => window.removeEventListener('xr:unauthorized', onUnauth);
+  }, []);
+  if (me === undefined) return <div className="flex min-h-screen items-center justify-center text-muted"><Spinner className="h-6 w-6" /></div>;
+  if (me === null) return <Login appName={appName} onLoggedIn={check} />;
+  return <Shell appName={appName} me={me} onLogout={async () => { await api.post('/auth/logout').catch(() => undefined); setMe(null); }} />;
 }
 
 function BootError({ onRetry }: { onRetry: () => void }) {
@@ -75,17 +105,27 @@ const NAV: { to: string; key: MsgKey; icon: IconName }[] = [
   { to: '/', key: 'nav.dashboard', icon: 'dashboard' },
   { to: '/invoices', key: 'nav.invoices', icon: 'file' },
   { to: '/invoices/new', key: 'nav.new_invoice', icon: 'filePlus' },
+  { to: '/contracts', key: 'nav.contracts', icon: 'fileSign' },
   { to: '/customers', key: 'nav.customers', icon: 'users' },
   { to: '/inbox', key: 'nav.inbox', icon: 'inbox' },
   { to: '/settings', key: 'nav.settings', icon: 'settings' },
 ];
 
-function Shell({ appName }: { appName: string }) {
+function Shell({ appName, me, onLogout }: { appName: string; me: Me; onLogout: () => void }) {
   const nav = useNavigate();
   const loc = useLocation();
-  const { t } = useI18n();
+  const { t, num } = useI18n();
   const [palette, setPalette] = useState(false);
   const [drawer, setDrawer] = useState(false);
+  const [badges, setBadges] = useState<Partial<Record<string, number>>>({});
+
+  // Sidebar counters: unpaid received invoices and contracts waiting for our countersignature.
+  useEffect(() => {
+    api.get<{ payment_status: string }[]>('/received')
+      .then((r) => setBadges((b) => ({ ...b, '/inbox': r.filter((x) => x.payment_status !== 'PAID').length }))).catch(() => {});
+    api.get<{ status: string }[]>('/contracts')
+      .then((r) => setBadges((b) => ({ ...b, '/contracts': r.filter((x) => x.status === 'CUSTOMER_SIGNED').length }))).catch(() => {});
+  }, [loc.pathname]);
 
   useEffect(() => { setDrawer(false); }, [loc.pathname]);
   useEffect(() => {
@@ -113,9 +153,20 @@ function Shell({ appName }: { appName: string }) {
         <NavLink key={n.to} to={n.to} end={n.to === '/' || n.to === '/invoices'}
           className={({ isActive }) => `flex h-10 items-center gap-3 rounded-lg px-3 text-sm font-medium transition-colors ${isActive ? 'bg-primary-soft text-primary-fg' : 'text-muted hover:bg-surface-2 hover:text-fg'}`}>
           <Icon name={n.icon} className="h-[18px] w-[18px]" />
-          {t(n.key)}
+          <span className="flex-1">{t(n.key)}</span>
+          {!!badges[n.to] && <span className="tabular rounded-full bg-primary px-2 py-0.5 text-[11px] font-semibold text-on-primary" aria-label={t('nav.badge', { n: badges[n.to]! })}>{num(badges[n.to]!)}</span>}
         </NavLink>
       ))}
+      <div className="mt-auto border-t border-line px-2 pt-3">
+        <div className="mb-2 min-w-0">
+          <div className="text-[11px] text-muted">{t('auth.signed_in_as')}</div>
+          <div className="truncate text-sm font-medium" dir="auto" title={me.email}>{me.fullName || me.email}</div>
+        </div>
+        <button className="flex h-10 w-full items-center gap-3 rounded-lg px-3 text-sm font-medium text-muted transition-colors hover:bg-surface-2 hover:text-fg" onClick={onLogout}>
+          <Icon name="logOut" className="h-[18px] w-[18px]" flip />
+          {t('auth.logout')}
+        </button>
+      </div>
     </nav>
   );
 
@@ -151,7 +202,9 @@ function Shell({ appName }: { appName: string }) {
             <Route path="/invoices/new" element={<NewInvoice />} />
             <Route path="/invoices/:id" element={<InvoiceDetail />} />
             <Route path="/customers" element={<Customers />} />
+            <Route path="/contracts/*" element={<Contracts />} />
             <Route path="/inbox" element={<Inbox />} />
+            <Route path="/inbox/:id" element={<InboxDetail />} />
             <Route path="/settings/*" element={<Settings />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

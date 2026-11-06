@@ -11,9 +11,32 @@ const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}/, 'invalid_date');
 
 // IBAN structural check (not a full mod-97 check here; service layer does mod-97).
 const ibanRegex = /^[A-Z]{2}\d{2}[A-Z0-9]{10,30}$/;
+/** Iranian Sheba (شبا): "IR" + 24 digits; checksum is standard IBAN mod-97. */
+const shabaRegex = /^IR\d{24}$/;
+
+/** Persian/Arabic digits → Latin; strips spaces, dashes and dots. */
+export function latinDigits(v: string): string {
+  return v
+    .replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)))
+    .replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)))
+    .replace(/[\s\-–_.]/g, '');
+}
+
+/** Normalize a Sheba as typed: Persian digits, spaces, missing "IR" prefix. */
+export function normalizeShaba(v: string): string {
+  const s = latinDigits(v).toUpperCase();
+  return /^\d{24}$/.test(s) ? `IR${s}` : s;
+}
+
 const bicRegex = /^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$/;
 
-export const sellerProfileSchema = z.object({
+/** DB rows come back with NULL for unset columns; treat them as "not given". */
+const dropNulls = (v: unknown) =>
+  v && typeof v === 'object' && !Array.isArray(v)
+    ? Object.fromEntries(Object.entries(v as Record<string, unknown>).filter(([, x]) => x !== null))
+    : v;
+
+export const sellerProfileSchema = z.preprocess(dropNulls, z.object({
   full_name: z.string().min(1),
   business_name: z.string().optional(),
   job_title: z.string().min(1),
@@ -27,8 +50,9 @@ export const sellerProfileSchema = z.object({
   steuernummer: z.string().optional(),
   ust_idnr: z.string().optional(),
   kleinunternehmer_id: z.string().optional(),
-  account_holder: z.string().min(1),
-  iban: z.string().transform((s) => s.replace(/\s/g, '').toUpperCase()).pipe(z.string().regex(ibanRegex, 'invalid_iban')),
+  // German bank account — printed on EUR invoices.
+  account_holder: z.string().optional(),
+  iban: z.string().transform((s) => s.replace(/\s/g, '').toUpperCase()).pipe(z.string().regex(ibanRegex, 'invalid_iban')).optional().or(z.literal('')),
   bic: z.string().transform((s) => s.replace(/\s/g, '').toUpperCase()).pipe(z.string().regex(bicRegex)).optional().or(z.literal('')),
   bank_name: z.string().optional(),
   default_payment_days: z.number().int().min(0).max(365).default(14),
@@ -42,10 +66,18 @@ export const sellerProfileSchema = z.object({
   economic_code: z.string().optional(),
   tax_memory_id: z.string().optional(),
   iran_vat_rate_bp: z.number().int().min(0).max(10000).default(1000),
+  // Iranian bank account — printed on IRR/IRT invoices.
+  iran_account_holder: z.string().optional(),
+  iran_bank_name: z.string().optional(),
+  shaba: z.string().transform(normalizeShaba).pipe(z.string().regex(shabaRegex, 'invalid_shaba')).optional().or(z.literal('')),
+  iran_card_number: z.string().transform(latinDigits).pipe(z.string().regex(/^\d{16}$/, 'invalid_card_number')).optional().or(z.literal('')),
 }).refine(
   (v) => Boolean(v.steuernummer || v.ust_idnr || v.kleinunternehmer_id || v.national_id || v.economic_code),
   { message: 'tax_id_required', path: ['steuernummer'] },
-);
+).refine(
+  (v) => Boolean(v.iban || v.shaba),
+  { message: 'bank_account_required', path: ['iban'] },
+));
 
 export const customerSchema = z.object({
   customer_code: z.string().trim().min(1).optional(),
@@ -103,6 +135,7 @@ export const invoiceDraftSchema = z.object({
   buyer_reference: z.string().optional(),
   purchase_order_reference: z.string().optional(),
   order_reference: z.string().optional(),
+  contract_reference: z.string().max(120).optional(),
   public_note: z.string().optional(),
   internal_note: z.string().optional(),
   items: z.array(invoiceItemSchema).default([]),
@@ -137,12 +170,16 @@ export const serviceTemplateSchema = z.object({
   category: z.string().optional(),
   is_active: z.boolean().default(true),
   sort_order: z.number().int().default(0),
+  /** Currency of default_price_cents; also decides the market (EUR → DE, IRR/IRT → IR). */
+  currency: z.enum(['EUR', 'IRR', 'IRT', 'IRT_NEW']).default('EUR'),
 });
 
 // ---- Setup wizard ----
 export const setupStep1Schema = z.object({
   owner_name: z.string().min(1),
   owner_email: z.string().email(),
+  /** Login password for the owner (min 10 chars; policy checked again server-side). */
+  owner_password: z.string().min(10, 'password_too_short').max(128, 'password_too_long'),
   recovery_email: z.string().email().optional().or(z.literal('')),
   locale: z.string().default('fa'),
   timezone: z.string().default('Europe/Berlin'),
@@ -167,6 +204,12 @@ export const settingUpdateSchema = z.object({
   is_secret: z.boolean().default(false),
   reason: z.string().optional(),
 });
+
+/** Full Sheba validation: IR + 24 digits with a valid mod-97 checksum. */
+export function isValidShaba(shaba: string): boolean {
+  const s = normalizeShaba(shaba);
+  return shabaRegex.test(s) && isValidIban(s);
+}
 
 /** Full IBAN mod-97 validation used by the service layer. */
 export function isValidIban(iban: string): boolean {

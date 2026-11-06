@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import { errorText, useI18n } from '../i18n';
 import type { Lang, MsgKey } from '../i18n';
-import { money, normalizeQty } from '../currency';
+import { convertPrice, marketOf, money, normalizeQty } from '../currency';
 import { normalizeText } from '../../lib/search';
 import { Alert, Field, Icon, MoneyInput, PageHeader, Section, Spinner, useToast } from '../ui';
 import { CustomerCombobox, customerName } from '../components/CustomerSearch';
@@ -13,7 +13,7 @@ import { CustomerFormModal } from './Customers';
 const UNITS = ['Stunde', 'Tag', 'Pauschale', 'Stück', 'Kilometer', 'Projekt', 'Minute'] as const;
 type Unit = (typeof UNITS)[number];
 
-interface Template { id: string; name: string; default_description: string; unit: Unit; default_price_cents: number; category: string | null }
+interface Template { id: string; name: string; default_description: string; unit: Unit; default_price_cents: number; category: string | null; market: 'DE' | 'IR'; currency: string }
 interface Item { key: number; description: string; quantity: string; unit: Unit; unit_price_cents: number; discount_cents: number }
 interface CustomerFull extends CustomerHit { street: string | null; postal_code: string | null }
 
@@ -32,6 +32,15 @@ export function NewInvoice() {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [items, setItems] = useState<Item[]>([]);
   const [projectName, setProjectName] = useState('');
+  const [projectNumber, setProjectNumber] = useState('');
+  const [poRef, setPoRef] = useState('');
+  const [contractRef, setContractRef] = useState('');
+  const [contracts, setContracts] = useState<{ id: string; contract_number: string; title: string; status: string; customer_id: string | null }[]>([]);
+  const [terms, setTerms] = useState<'default' | '0' | '14' | '30' | 'custom'>('default');
+  const [customDue, setCustomDue] = useState('');
+  const [defaultDays, setDefaultDays] = useState(14);
+  const [previewKey, setPreviewKey] = useState(0);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [invoiceDate, setInvoiceDate] = useState('');
   const [currency, setCurrency] = useState(mode === 'fa' ? 'IRT' : 'EUR');
   const [language, setLanguage] = useState<Lang>(mode === 'fa' ? 'fa' : 'de');
@@ -53,9 +62,11 @@ export function NewInvoice() {
 
   useEffect(() => {
     api.get<Template[]>('/templates?active=1').then(setTemplates).catch(() => {});
-    api.get<{ iran_tax_status?: string; iran_vat_rate_bp?: number } | null>('/settings/seller')
+    api.get<{ id: string; contract_number: string; title: string; status: string; customer_id: string | null }[]>('/contracts').then(setContracts).catch(() => {});
+    api.get<{ iran_tax_status?: string; iran_vat_rate_bp?: number; default_payment_days?: number } | null>('/settings/seller')
       .then((s) => {
         setSellerMissing(!s);
+        if (typeof s?.default_payment_days === 'number') setDefaultDays(s.default_payment_days);
         if (s) setSellerTax({ status: s.iran_tax_status ?? 'MICRO', rateBp: s.iran_vat_rate_bp ?? 1000 });
       }).catch(() => {});
     api.get<{ currency: string; invoice_language: string }>('/settings/general').then((g) => {
@@ -112,17 +123,31 @@ export function NewInvoice() {
       const tpl = await api.post<Template>('/templates', {
         name: it.description.trim().slice(0, 80), default_description: it.description.trim(),
         unit: it.unit, default_price_cents: it.unit_price_cents, is_active: true,
+        currency, // → German (EUR) or Persian (rial/toman) template list
       });
       setTemplates((p) => [...p, tpl]);
       toast(t('ni.template_saved'));
     } catch (e) { fail(e); }
   }
 
+  // Due date from the chosen payment term (relative to the invoice date, or today when issued now).
+  const dueDate = (() => {
+    if (terms === 'default') return undefined;
+    if (terms === 'custom') return customDue || undefined;
+    const base = invoiceDate ? new Date(`${invoiceDate}T12:00:00Z`) : new Date();
+    return new Date(base.getTime() + Number(terms) * 86_400_000).toISOString().slice(0, 10);
+  })();
+  const signedContracts = contracts.filter((c) => (c.status === 'SIGNED' || c.status === 'CUSTOMER_SIGNED') && (!customer || c.customer_id === customer.id));
+
   function buildBody() {
     const lines = items.filter((it) => it.description.trim());
     return {
       customer_id: customer!.id,
       project_name: projectName || undefined,
+      project_number: projectNumber.trim() || undefined,
+      purchase_order_reference: poRef.trim() || undefined,
+      contract_reference: contractRef || undefined,
+      due_date: dueDate,
       invoice_date: invoiceDate || undefined,
       currency,
       invoice_language: language,
@@ -154,7 +179,12 @@ export function NewInvoice() {
 
   async function saveDraft() {
     setBusy('draft');
-    try { if (await persist()) toast(t('ni.draft_saved')); } catch (e) { fail(e); } finally { setBusy(null); }
+    try { if (await persist()) { toast(t('ni.draft_saved')); setPreviewKey((k) => k + 1); } } catch (e) { fail(e); } finally { setBusy(null); }
+  }
+  async function refreshPreview() {
+    setPreviewOpen(true);
+    setBusy('draft');
+    try { if (await persist()) setPreviewKey((k) => k + 1); } catch (e) { fail(e); } finally { setBusy(null); }
   }
   async function issue() {
     setBusy('issue');
@@ -203,12 +233,33 @@ export function NewInvoice() {
                 api.get<{ customer: CustomerFull }>(`/customers/${c.id}`).then((d) => setCustomer(d.customer)).catch(() => setCustomer(c as CustomerFull));
               }} onCreate={(q) => setCustModal({ open: true, prefill: q })} />
             )}
+            {customer && (
+              <div className="mt-4 grid gap-3 border-t border-line pt-4 sm:grid-cols-3">
+                <Field label={t('ni.contract_link')} htmlFor="ctr-link" className="sm:col-span-3"
+                  hint={contractRef ? t('ni.contract_linked') : signedContracts.length ? undefined : t('ni.no_signed_contracts')}>
+                  <select id="ctr-link" className="input" value={contractRef} onChange={(e) => {
+                    setContractRef(e.target.value);
+                    const c = signedContracts.find((x) => x.contract_number === e.target.value);
+                    if (c && !projectName) setProjectName(c.title);
+                  }}>
+                    <option value="">{t('ni.no_contract')}</option>
+                    {signedContracts.map((c) => <option key={c.id} value={c.contract_number}>{c.title} ({c.contract_number}){c.status === 'CUSTOMER_SIGNED' ? ` · ${tx('status.CUSTOMER_SIGNED', '')}` : ''}</option>)}
+                  </select>
+                </Field>
+                <Field label={`${t('ni.project_code')} (${t('common.optional')})`} htmlFor="proj-no">
+                  <input id="proj-no" className="input" dir="ltr" value={projectNumber} onChange={(e) => setProjectNumber(e.target.value)} maxLength={60} />
+                </Field>
+                <Field label={`${t('ni.po')} (${t('common.optional')})`} htmlFor="po" className="sm:col-span-2" hint={t('ni.po_hint')}>
+                  <input id="po" className="input" dir="ltr" value={poRef} onChange={(e) => setPoRef(e.target.value)} maxLength={120} />
+                </Field>
+              </div>
+            )}
           </Section>
 
           {/* Line items */}
           <Section title={t('ni.items')} icon="package"
             actions={<>
-              <TemplatePicker templates={templates} currency={currency} onPick={(tpl) => addLine({ description: tpl.default_description, unit: tpl.unit, unit_price_cents: tpl.default_price_cents })} />
+              <TemplatePicker templates={templates} currency={currency} onPick={(tpl) => addLine({ description: tpl.default_description, unit: tpl.unit, unit_price_cents: convertPrice(tpl.default_price_cents, tpl.currency, currency) })} />
               <button className="btn-primary btn-sm" onClick={() => addLine()}><Icon name="plus" />{t('ni.add_line')}</button>
             </>}>
             {items.length === 0 ? (
@@ -339,6 +390,20 @@ export function NewInvoice() {
               <Field label={t('ni.invoice_date')} hint={t('ni.invoice_date_hint')} htmlFor="idate">
                 <input id="idate" className="input" type="date" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} />
               </Field>
+              <Field label={t('ni.terms')} htmlFor="terms" hint={dueDate ? `${t('inv.due')}: ${i18n.date(dueDate)}` : t('ni.terms_default_hint', { n: defaultDays })}>
+                <select id="terms" className="input" value={terms} onChange={(e) => setTerms(e.target.value as typeof terms)}>
+                  <option value="default">{t('ni.terms_default', { n: defaultDays })}</option>
+                  <option value="14">{t('ni.terms_net', { n: 14 })}</option>
+                  <option value="30">{t('ni.terms_net', { n: 30 })}</option>
+                  <option value="0">{t('ni.terms_receipt')}</option>
+                  <option value="custom">{t('ni.terms_custom')}</option>
+                </select>
+              </Field>
+              {terms === 'custom' && (
+                <Field label={t('inv.due')} htmlFor="due-custom">
+                  <input id="due-custom" className="input" type="date" min={invoiceDate || undefined} value={customDue} onChange={(e) => setCustomDue(e.target.value)} />
+                </Field>
+              )}
               <div className="grid grid-cols-2 gap-3 lg:grid-cols-1 xl:grid-cols-2">
                 <Field label={t('ni.currency')} htmlFor="cur">
                   <select id="cur" className="input" value={currency} disabled={currencyOptions.length < 2} onChange={(e) => setCurrency(e.target.value)}>
@@ -378,6 +443,23 @@ export function NewInvoice() {
               <p className="mt-3 rounded-md bg-surface-2 px-3 py-2 text-xs text-muted" dir="ltr" lang="de">Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.</p>
             )}
           </section>
+
+          <section className="card overflow-hidden">
+            <div className="flex items-center justify-between gap-2 border-b border-line px-4 py-3">
+              <h2 className="section-title flex items-center gap-2"><Icon name="eye" className="h-4 w-4 text-muted" />{t('ni.live_preview')}</h2>
+              <button className="btn-ghost btn-sm" onClick={() => void refreshPreview()} disabled={!!busy || !customer || !items.some((it) => it.description.trim())}>
+                {busy === 'draft' ? <Spinner /> : <Icon name="activity" />}{previewOpen ? t('ni.preview_refresh') : t('ni.preview_show')}
+              </button>
+            </div>
+            {previewOpen && invoiceId ? (
+              <div className="relative bg-surface-2 p-2" style={{ height: '28rem' }}>
+                <iframe key={previewKey} title={t('ni.live_preview')} src={`/api/invoices/${invoiceId}/preview?v=${previewKey}`}
+                  sandbox="allow-same-origin" className="h-[56rem] w-[200%] origin-top-left scale-50 rounded border border-line bg-white rtl:origin-top-right" />
+              </div>
+            ) : (
+              <p className="px-4 py-6 text-center text-sm text-muted">{t('ni.preview_hint')}</p>
+            )}
+          </section>
         </div>
       </div>
 
@@ -413,7 +495,7 @@ function Row({ label, value, tone, strong }: { label: string; value: string; ton
 
 /** Searchable template dropdown. */
 function TemplatePicker({ templates, currency, onPick }: { templates: Template[]; currency: string; onPick: (t: Template) => void }) {
-  const { t, tx, lang } = useI18n();
+  const { t, tx, lang, num: i18nNum } = useI18n();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
   const ref = useRef<HTMLDivElement>(null);
@@ -422,20 +504,27 @@ function TemplatePicker({ templates, currency, onPick }: { templates: Template[]
     document.addEventListener('mousedown', fn);
     return () => document.removeEventListener('mousedown', fn);
   }, []);
+  // German templates on EUR invoices, Persian ones on rial/toman invoices — never mixed.
+  const market = marketOf(currency);
+  const mine = useMemo(() => templates.filter((x) => (x.market ?? 'DE') === market), [templates, market]);
   const shown = useMemo(() => {
     const nq = normalizeText(q);
-    return templates.filter((x) => !nq || normalizeText(`${x.name} ${x.default_description} ${x.category ?? ''}`).includes(nq));
-  }, [q, templates]);
+    return mine.filter((x) => !nq || normalizeText(`${x.name} ${x.default_description} ${x.category ?? ''}`).includes(nq));
+  }, [q, mine]);
   return (
     <div ref={ref} className="relative">
       <button className="btn-secondary btn-sm" aria-expanded={open} onClick={() => setOpen((o) => !o)}><Icon name="bookmark" />{t('ni.templates')}<Icon name="chevronDown" className="h-3.5 w-3.5" /></button>
       {open && (
         <div className="absolute end-0 z-30 mt-1 w-80 max-w-[85vw] rounded-xl border border-line bg-surface shadow-lg">
           <div className="border-b border-line p-2">
+            <div className="mb-2 flex items-center justify-between px-1 text-xs text-muted">
+              <span className="font-medium text-fg">{t(market === 'IR' ? 'ni.templates_ir' : 'ni.templates_de')}</span>
+              <span className="tabular">{i18nNum(mine.length)}</span>
+            </div>
             <input className="input h-9" autoFocus placeholder={t('ni.template_search')} value={q} onChange={(e) => setQ(e.target.value)} />
           </div>
           <div className="max-h-72 overflow-y-auto py-1">
-            {templates.length === 0 && <p className="px-3 py-3 text-sm text-muted">{t('ni.no_templates')}</p>}
+            {mine.length === 0 && <p className="px-3 py-3 text-sm text-muted">{t(market === 'IR' ? 'ni.no_templates_ir' : 'ni.no_templates')}</p>}
             {shown.map((x) => (
               <button key={x.id} className="flex w-full items-center justify-between gap-3 px-3 py-2 text-start text-sm hover:bg-surface-2"
                 onClick={() => { onPick(x); setOpen(false); setQ(''); }}>
@@ -443,7 +532,7 @@ function TemplatePicker({ templates, currency, onPick }: { templates: Template[]
                   <span className="block truncate font-medium">{x.name}</span>
                   <span className="block text-xs text-muted">{tx(`unit.${x.unit}`, x.unit)}</span>
                 </span>
-                <span className="tabular whitespace-nowrap text-xs text-muted">{money(x.default_price_cents, currency, lang)}</span>
+                <span className="tabular whitespace-nowrap text-xs text-muted">{money(convertPrice(x.default_price_cents, x.currency, currency), currency, lang)}</span>
               </button>
             ))}
           </div>

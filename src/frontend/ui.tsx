@@ -30,6 +30,13 @@ const ICONS: Record<string, ReactNode> = {
   globe: <><circle cx="12" cy="12" r="10" /><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" /><path d="M2 12h20" /></>,
   menu: <><path d="M4 6h16" /><path d="M4 12h16" /><path d="M4 18h16" /></>,
   eye: <><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" /><circle cx="12" cy="12" r="3" /></>,
+  eyeOff: <><path d="M9.9 4.2A9.6 9.6 0 0 1 12 4c7 0 10 8 10 8a17.6 17.6 0 0 1-2.2 3.2" /><path d="M6.6 6.6C3.6 8.6 2 12 2 12s3 7 10 7a9.7 9.7 0 0 0 5.4-1.6" /><path d="M14.1 14.1a3 3 0 0 1-4.2-4.2" /><line x1="2" y1="2" x2="22" y2="22" /></>,
+  pen: <><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></>,
+  fileSign: <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><path d="M8 18c1.5-2 2.5-2 3 0s1.5 2 3 0" /></>,
+  copy: <><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></>,
+  link: <><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7" /><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7" /></>,
+  lock: <><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></>,
+  logOut: <><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></>,
   bookmark: <path d="M19 21l-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z" />,
   chevronDown: <path d="m6 9 6 6 6-6" />,
   chevronRight: <path d="m9 18 6-6-6-6" />,
@@ -160,6 +167,9 @@ const STATUS_TONE: Record<string, string> = {
   OVERDUE: 'bg-danger-soft text-danger',
   CANCELLATION_PENDING: 'bg-warning-soft text-warning',
   CANCELLED: 'bg-surface-2 text-muted line-through',
+  VIEWED: 'bg-warning-soft text-warning',
+  CUSTOMER_SIGNED: 'bg-primary-soft text-primary-fg',
+  SIGNED: 'bg-success-soft text-success',
 };
 export function StatusBadge({ status }: { status: string }) {
   const { tx } = useI18n();
@@ -279,3 +289,25 @@ export function Options({ values, prefix }: { values: readonly string[]; prefix:
 }
 
 export function useT() { return useI18n().t as (k: MsgKey, v?: Record<string, string | number>) => string; }
+
+/** Password field with a show/hide toggle (44px hit area, labelled for screen readers). */
+export function PasswordInput({ id, value, onChange, autoComplete, required, minLength, invalid, describedBy }: {
+  id: string; value: string; onChange: (v: string) => void; autoComplete: 'current-password' | 'new-password';
+  required?: boolean; minLength?: number; invalid?: boolean; describedBy?: string;
+}) {
+  const { t } = useI18n();
+  const [show, setShow] = useState(false);
+  return (
+    <div className="relative">
+      <input id={id} type={show ? 'text' : 'password'} className="input pe-11" dir="ltr" value={value}
+        onChange={(e) => onChange(e.target.value)} autoComplete={autoComplete} required={required} minLength={minLength}
+        autoCapitalize="off" autoCorrect="off" spellCheck={false}
+        aria-invalid={invalid || undefined} aria-describedby={describedBy} />
+      <button type="button" onClick={() => setShow(!show)} aria-pressed={show}
+        aria-label={show ? t('auth.hide_pw') : t('auth.show_pw')} title={show ? t('auth.hide_pw') : t('auth.show_pw')}
+        className="absolute inset-y-0 end-0 flex w-11 items-center justify-center rounded-e-lg text-muted transition-colors hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary">
+        <Icon name={show ? 'eyeOff' : 'eye'} className="h-[18px] w-[18px]" />
+      </button>
+    </div>
+  );
+}

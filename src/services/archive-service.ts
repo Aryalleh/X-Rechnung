@@ -12,7 +12,7 @@ import { sha256Hex } from '../lib/crypto';
 import { insertDocument } from '../db/repositories/document-repo';
 import { AppError } from '../lib/errors';
 
-export type ArchiveArea = 'outgoing' | 'incoming' | 'email' | 'export';
+export type ArchiveArea = 'outgoing' | 'incoming' | 'email' | 'export' | 'contracts';
 
 function partition(area: ArchiveArea, date: string, filename: string): string {
   const yyyy = date.slice(0, 4);
