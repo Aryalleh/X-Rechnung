@@ -89,11 +89,11 @@ export async function sessionActor(c: Context<HonoEnv>): Promise<(Actor & { user
   const token = getCookie(c, SESSION_COOKIE);
   if (!token || token.length > 128) return null;
   const id = await sha256Hex(token);
-  const row = await one<{ admin_user_id: string; email: string; role: Actor['role']; status: string; expires_at: string }>(c.env.DB,
-    `SELECT s.admin_user_id, u.email, u.role, u.status, s.expires_at
+  const row = await one<{ admin_user_id: string; email: string; role: Actor['role']; status: string; expires_at: string; mail_only: number; mail_address: string | null }>(c.env.DB,
+    `SELECT s.admin_user_id, u.email, u.role, u.status, s.expires_at, u.mail_only, u.mail_address
        FROM admin_sessions s JOIN admin_users u ON u.id = s.admin_user_id WHERE s.id = ?1`, id);
   if (!row || row.status !== 'ACTIVE' || Date.parse(row.expires_at) < Date.now()) return null;
-  return { email: row.email, role: row.role, userId: row.admin_user_id, sessionId: id };
+  return { email: row.email, role: row.mail_only ? 'MAIL_USER' : row.role, mailAddress: row.mail_address, userId: row.admin_user_id, sessionId: id };
 }
 
 export async function endSession(c: Context<HonoEnv>): Promise<void> {

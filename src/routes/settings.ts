@@ -22,6 +22,19 @@ import { all, run, one } from '../db/client';
 import { newId } from '../lib/ids';
 import { audit } from '../services/audit-service';
 import * as cfApi from '../services/cloudflare-api-service';
+import { mailSettings } from '../services/mail-service';
+
+/** Validate a personal mailbox: on the mail domain and not taken by another user. Empty → null. */
+async function checkMailbox(db: D1Database, address: string | null | undefined, exceptId?: string): Promise<string | null> {
+  const a = (address ?? '').trim().toLowerCase();
+  if (!a) return null;
+  if (!/^[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+$/.test(a)) throw new AppError('VALIDATION_ERROR', 'invalid mailbox', { mail_address: 'invalid' });
+  const { domain } = await mailSettings(db);
+  if (domain && a.split('@')[1] !== domain) throw new AppError('VALIDATION_ERROR', 'mailbox must be on the mail domain', { mail_address: 'wrong_domain' });
+  const taken = await one<{ id: string }>(db, `SELECT id FROM admin_users WHERE lower(mail_address)=?1 AND id != ?2`, a, exceptId ?? '');
+  if (taken) throw new AppError('CONFLICT', 'mailbox taken', { mail_address: 'taken' });
+  return a;
+}
 
 export const settingsRoutes = new Hono<HonoEnv>();
 
@@ -100,24 +113,45 @@ settingsRoutes.put('/einvoice', async (c) => {
 // ------------------------------- Users ----------------------------------
 settingsRoutes.get('/users', async (c) => ok(c, await listAdmins(c.env.DB)));
 settingsRoutes.post('/users', requireRole('OWNER'), async (c) => {
-  const body = await parseBody(c, z.object({ email: z.string().email(), full_name: z.string().optional(), role: z.enum(['ADMIN', 'ACCOUNTANT', 'READ_ONLY']), password: z.string().max(PASSWORD_MAX).optional().or(z.literal('')) }));
+  const body = await parseBody(c, z.object({
+    email: z.string().email(), full_name: z.string().optional(), role: z.enum(['ADMIN', 'ACCOUNTANT', 'READ_ONLY', 'MAIL_USER']),
+    password: z.string().max(PASSWORD_MAX).optional().or(z.literal('')), mail_address: z.string().max(254).optional().or(z.literal('')),
+  }));
   if (body.password) assertPasswordPolicy(body.password, body.email);
   if (await findAdminByEmail(c.env.DB, body.email)) throw new AppError('CONFLICT', 'user exists', { email: 'user_exists' });
-  const created = await createAdmin(c.env.DB, { email: body.email, role: body.role, ...(body.full_name ? { full_name: body.full_name } : {}) });
+  // An email-only user always needs a mailbox; default it to the login address.
+  const mailbox = await checkMailbox(c.env.DB, body.mail_address || (body.role === 'MAIL_USER' ? body.email : ''));
+  if (body.role === 'MAIL_USER' && !mailbox) throw new AppError('VALIDATION_ERROR', 'mailbox required', { mail_address: 'required' });
+  const created = await createAdmin(c.env.DB, { email: body.email, role: body.role === 'MAIL_USER' ? 'READ_ONLY' : body.role, ...(body.full_name ? { full_name: body.full_name } : {}) });
+  await run(c.env.DB, `UPDATE admin_users SET mail_address=?2, mail_only=?3 WHERE id=?1`, created.id, mailbox, body.role === 'MAIL_USER' ? 1 : 0);
   if (body.password) await setPassword(c.env.DB, created.id, body.password);
-  await audit(c.env.DB, { entityType: 'admin_user', entityId: created.id, eventType: 'ADMIN_USER_CREATED', actorEmail: c.get('actor')!.email, metadata: { role: body.role } });
-  return ok(c, created, 201);
+  await audit(c.env.DB, { entityType: 'admin_user', entityId: created.id, eventType: 'ADMIN_USER_CREATED', actorEmail: c.get('actor')!.email, metadata: { role: body.role, mailbox } });
+  return ok(c, { ...created, mail_address: mailbox, mail_only: body.role === 'MAIL_USER' ? 1 : 0 }, 201);
 });
 settingsRoutes.put('/users/:id/role', requireRole('OWNER'), async (c) => {
-  const body = await parseBody(c, z.object({ role: z.enum(['OWNER', 'ADMIN', 'ACCOUNTANT', 'READ_ONLY']) }));
+  const body = await parseBody(c, z.object({ role: z.enum(['OWNER', 'ADMIN', 'ACCOUNTANT', 'READ_ONLY', 'MAIL_USER']) }));
   // Ownership only moves through the verified transfer flow; an owner is never demoted here.
-  const target = await one<{ role: string }>(c.env.DB, `SELECT role FROM admin_users WHERE id=?1`, c.req.param('id'));
+  const target = await one<{ role: string; mail_address: string | null }>(c.env.DB, `SELECT role, mail_address FROM admin_users WHERE id=?1`, c.req.param('id'));
   if (!target) throw new AppError('NOT_FOUND');
   if (body.role === 'OWNER' || target.role === 'OWNER') throw new AppError('CONFLICT', 'use the ownership transfer to change the owner');
-  await updateAdminRole(c.env.DB, c.req.param('id'), body.role);
+  if (body.role === 'MAIL_USER' && !target.mail_address) throw new AppError('VALIDATION_ERROR', 'assign a mailbox first', { mail_address: 'required' });
+  await updateAdminRole(c.env.DB, c.req.param('id'), body.role === 'MAIL_USER' ? 'READ_ONLY' : body.role);
+  await run(c.env.DB, `UPDATE admin_users SET mail_only=?2 WHERE id=?1`, c.req.param('id'), body.role === 'MAIL_USER' ? 1 : 0);
   await audit(c.env.DB, { entityType: 'admin_user', entityId: c.req.param('id'), eventType: 'ADMIN_ROLE_CHANGED', actorEmail: c.get('actor')!.email, metadata: { from: target.role, to: body.role } });
   return ok(c, { updated: true });
 });
+/** Owner assigns, changes or removes a user's personal mailbox address. */
+settingsRoutes.put('/users/:id/mailbox', requireRole('OWNER'), async (c) => {
+  const body = await parseBody(c, z.object({ mail_address: z.string().max(254).nullable() }));
+  const target = await one<{ id: string; mail_only: number; mail_address: string | null }>(c.env.DB, `SELECT id, mail_only, mail_address FROM admin_users WHERE id=?1`, c.req.param('id'));
+  if (!target) throw new AppError('NOT_FOUND');
+  const mailbox = await checkMailbox(c.env.DB, body.mail_address, target.id);
+  if (!mailbox && target.mail_only) throw new AppError('VALIDATION_ERROR', 'email-only users need a mailbox', { mail_address: 'required' });
+  await run(c.env.DB, `UPDATE admin_users SET mail_address=?2, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1`, target.id, mailbox);
+  await audit(c.env.DB, { entityType: 'admin_user', entityId: target.id, eventType: 'ADMIN_MAILBOX_CHANGED', actorEmail: c.get('actor')!.email, metadata: { from: target.mail_address, to: mailbox } });
+  return ok(c, { mail_address: mailbox });
+});
+
 /** Owner sets / resets another user's password; signs that user out everywhere. */
 settingsRoutes.put('/users/:id/password', requireRole('OWNER'), async (c) => {
   const body = await parseBody(c, z.object({ password: z.string().max(PASSWORD_MAX) }));

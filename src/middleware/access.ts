@@ -124,6 +124,7 @@ export const requireAccess: MiddlewareHandler<HonoEnv> = async (c, next) => {
   const session = await sessionActor(c);
   if (session) {
     c.set('actor', { ...session, via: 'session' });
+    mailOnlyGuard(c.get('actor')!, c.req.path);
     await next();
     return;
   }
@@ -136,7 +137,8 @@ export const requireAccess: MiddlewareHandler<HonoEnv> = async (c, next) => {
     if (!email) throw new AppError('UNAUTHORIZED', 'no email claim');
     const admin = await findAdminByEmail(c.env.DB, email);
     if (!admin || admin.status !== 'ACTIVE') throw new AppError('FORBIDDEN', 'not an active admin');
-    c.set('actor', { email, role: admin.role, userId: admin.id, via: 'access', ...(claims.sub ? { identityId: claims.sub } : {}) });
+    c.set('actor', { email, role: admin.mail_only ? 'MAIL_USER' : admin.role, mailAddress: admin.mail_address, userId: admin.id, via: 'access', ...(claims.sub ? { identityId: claims.sub } : {}) });
+    mailOnlyGuard(c.get('actor')!, c.req.path);
     await next();
     return;
   }
@@ -148,6 +150,13 @@ export const requireAccess: MiddlewareHandler<HonoEnv> = async (c, next) => {
   }
   throw new AppError('UNAUTHORIZED', 'login required');
 };
+
+/** Email-only users may use the mailbox and their own account endpoints — nothing else. */
+function mailOnlyGuard(actor: Actor, path: string): void {
+  if (actor.role !== 'MAIL_USER') return;
+  if (path === '/api/mail' || path.startsWith('/api/mail/') || path.startsWith('/api/auth/')) return;
+  throw new AppError('FORBIDDEN', 'mailbox-only account');
+}
 
 /** Restrict a route to specific roles. */
 export function requireRole(...roles: Actor['role'][]): MiddlewareHandler<HonoEnv> {

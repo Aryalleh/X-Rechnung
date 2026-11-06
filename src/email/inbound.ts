@@ -9,7 +9,7 @@ import type { Env, QueueMessage } from '../config/env';
 import { sha256Hex } from '../lib/crypto';
 import { berlinToday } from '../lib/format';
 import { newId } from '../lib/ids';
-import { run } from '../db/client';
+import { one, run } from '../db/client';
 import { storeImmutable } from '../services/archive-service';
 import { audit } from '../services/audit-service';
 import { parseEmail } from './mime';
@@ -70,12 +70,16 @@ export async function handleInboundEmail(message: CfEmailMessage, env: Env, ctx:
     await run(env.DB, `INSERT INTO job_failures (id, job_type, entity_type, entity_id, error_text) VALUES (?1,'STORE_MAIL','received_email',?2,?3)`,
       newId('job'), emailId, err instanceof Error ? err.message : String(err));
   }
-  // Optional copy to a personal mailbox (must be a verified Email Routing destination).
-  if (settings.forwardTo) ctx.waitUntil(message.forward(settings.forwardTo).catch(() => undefined));
-
-  // E-invoice intake: only mail sent to the invoice addresses when those are configured, otherwise every message.
+  // Mail to a user's personal mailbox stays private: no forward copy and no invoice intake
+  // (unless that address is explicitly listed as an invoice address).
   const rcpt = message.to.toLowerCase();
-  if (settings.invoiceAddresses.length && !settings.invoiceAddresses.includes(rcpt)) {
+  const personal = !!(await one<{ id: string }>(env.DB, `SELECT id FROM admin_users WHERE lower(mail_address) = ?1`, rcpt));
+
+  // Optional copy to a personal mailbox (must be a verified Email Routing destination).
+  if (settings.forwardTo && !personal) ctx.waitUntil(message.forward(settings.forwardTo).catch(() => undefined));
+
+  // E-invoice intake: only mail sent to the invoice addresses when those are configured, otherwise every shared message.
+  if (settings.invoiceAddresses.length ? !settings.invoiceAddresses.includes(rcpt) : personal) {
     await run(env.DB, `UPDATE received_emails SET status = 'PROCESSED' WHERE id = ?1`, emailId);
     return;
   }

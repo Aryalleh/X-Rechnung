@@ -15,11 +15,13 @@ export interface AdminUser {
   updated_at: string;
   /** 1 when a password is set (never the hash itself). */
   has_password: number;
+  mail_address: string | null;
+  mail_only: number;
 }
 
 /** Public columns only — password_hash / lockout state never leave the auth service. */
 const COLS = `id, email, full_name, recovery_email, role, status, access_identity_id, access_synced_at,
-  last_login_at, created_at, updated_at, (password_hash IS NOT NULL) AS has_password`;
+  last_login_at, created_at, updated_at, (password_hash IS NOT NULL) AS has_password, mail_address, mail_only`;
 
 export function findAdminByEmail(db: D1Database, email: string): Promise<AdminUser | null> {
   return one<AdminUser>(db, `SELECT ${COLS} FROM admin_users WHERE lower(email) = lower(?1)`, email);

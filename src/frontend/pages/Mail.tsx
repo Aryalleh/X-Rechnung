@@ -21,7 +21,8 @@ interface Counts { folders: Record<string, { total: number; unread: number }>; s
 export interface MailSettingsT { domain: string; addresses: string[]; invoiceAddresses: string[]; forwardTo: string | null; fromEmail: string; fromName: string; replyTo: string | null; signature: string }
 export interface MailStatus {
   domain: string | null; sendBinding: boolean; mx: { ok: boolean; records: string[] }; spf: { ok: boolean; value: string | null }; dkim: { ok: boolean };
-  fromEmail: string | null; lastInbound: string | null; lastOutbound: string | null; failed: number; senders: string[]; settings: MailSettingsT;
+  fromEmail: string | null; lastInbound: string | null; lastOutbound: string | null; failed: number; senders: string[]; settings: MailSettingsT | null;
+  me: { address: string | null; canManage: boolean; shared: boolean };
 }
 interface Draft { from: string; to: string; cc: string; bcc: string; subject: string; text: string; files: { filename: string; mime: string; data: string; size: number }[]; reply_to_id?: string; forward_id?: string; showCc: boolean }
 
@@ -62,11 +63,12 @@ export function Mail() {
     return new Intl.DateTimeFormat(locale, today ? { hour: '2-digit', minute: '2-digit' } : { day: '2-digit', month: 'short' }).format(d);
   };
   const compose = (patch: Partial<Draft> = {}) => setDraft({
-    from: status?.settings.fromEmail || status?.senders[0] || '', to: '', cc: '', bcc: '', subject: '', text: '', files: [], showCc: false, ...patch,
+    from: status?.me.address || status?.senders[0] || '', to: '', cc: '', bcc: '', subject: '', text: '', files: [], showCc: false, ...patch,
   });
 
-  const setupMode = id === 'setup';
-  const configured = !!status?.settings.fromEmail;
+  const canManage = !!status?.me.canManage;
+  const setupMode = id === 'setup' && canManage;
+  const configured = (status?.senders.length ?? 0) > 0;
 
   return (
     <div className="-mx-4 -my-6 flex h-[calc(100vh-4rem)] sm:-mx-8 sm:-my-8">
@@ -90,15 +92,16 @@ export function Mail() {
           })}
         </nav>
         <div className="mt-auto border-t border-line pt-4">
-          <Link to="/mail/setup" className={`flex h-10 items-center gap-3 rounded-lg px-3 text-sm font-medium ${setupMode ? 'bg-primary-soft text-primary-fg' : 'text-muted hover:bg-surface-2 hover:text-fg'}`}>
+          {canManage && <Link to="/mail/setup" className={`flex h-10 items-center gap-3 rounded-lg px-3 text-sm font-medium ${setupMode ? 'bg-primary-soft text-primary-fg' : 'text-muted hover:bg-surface-2 hover:text-fg'}`}>
             <Icon name="server" className="h-[18px] w-[18px]" /><span className="flex-1">{t('mail.server')}</span>
             {status && <span className={`h-2 w-2 rounded-full ${status.mx.ok && configured ? 'bg-success' : 'bg-warning'}`} aria-hidden="true" />}
-          </Link>
-          {status?.settings.addresses.length || status?.settings.fromEmail ? (
-            <div className="mt-3 space-y-1 px-3 text-xs text-muted" dir="ltr">
-              {[...new Set([status.settings.fromEmail, ...status.settings.addresses].filter(Boolean))].slice(0, 4).map((a) => <div key={a} className="truncate">{a}</div>)}
+          </Link>}
+          {status && (
+            <div className="mt-3 space-y-1 px-3 text-xs text-muted">
+              <div className="eyebrow text-[10px]">{t('mail.my_addresses')}</div>
+              {status.senders.length ? status.senders.slice(0, 5).map((a) => <div key={a} className="truncate" dir="ltr">{a}</div>) : <div>{t('mail.no_mailbox')}</div>}
             </div>
-          ) : null}
+          )}
         </div>
       </aside>
 
@@ -114,9 +117,9 @@ export function Mail() {
         </div>
         <div className="flex gap-1 overflow-x-auto border-b border-line px-3 py-2 lg:hidden">
           {FOLDERS.map((f) => (
-            <button key={f.key} onClick={() => setFolder(f.key)} className={`h-8 whitespace-nowrap rounded-full px-3 text-xs font-medium ${folder === f.key ? 'bg-primary text-on-primary' : 'bg-surface-2 text-muted'}`}>{t(`mail.f_${f.key}` as MsgKey)}</button>
+            <button key={f.key} onClick={() => { setFolder(f.key); if (id) nav('/mail'); }} className={`h-8 whitespace-nowrap rounded-full px-3 text-xs font-medium ${folder === f.key ? 'bg-primary text-on-primary' : 'bg-surface-2 text-muted'}`}>{t(`mail.f_${f.key}` as MsgKey)}</button>
           ))}
-          <Link to="/mail/setup" className="flex h-8 items-center whitespace-nowrap rounded-full bg-surface-2 px-3 text-xs font-medium text-muted">{t('mail.server')}</Link>
+          {canManage && <Link to="/mail/setup" className="flex h-8 items-center whitespace-nowrap rounded-full bg-surface-2 px-3 text-xs font-medium text-muted">{t('mail.server')}</Link>}
         </div>
         <div className="flex items-center justify-between px-4 py-2 text-xs text-muted">
           <span className="font-semibold uppercase tracking-wider">{t(`mail.f_${folder}` as MsgKey)}</span>
@@ -172,7 +175,7 @@ export function Mail() {
           <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center text-muted">
             <span className="flex h-16 w-16 items-center justify-center rounded-full bg-surface text-line-strong shadow-sm"><Icon name="mail" className="h-8 w-8" /></span>
             <p className="text-sm">{t('mail.pick')}</p>
-            {status && !configured && <Link to="/mail/setup" className="btn-primary btn-sm"><Icon name="server" />{t('mail.setup_now')}</Link>}
+            {status && !configured && (canManage ? <Link to="/mail/setup" className="btn-primary btn-sm"><Icon name="server" />{t('mail.setup_now')}</Link> : <p className="text-xs">{t('mail.no_mailbox_hint')}</p>)}
           </div>
         )}
       </section>
@@ -418,6 +421,7 @@ export function MailServerCard({ onSaved }: { onSaved?: (s: MailStatus) => void 
   const [err, setErr] = useState<string | null>(null);
   const load = useCallback(() => api.get<MailStatus>('/mail/status').then((s) => {
     setSt(s);
+    if (!s.settings) return s;
     setF({
       mail_domain: s.settings.domain, addresses: s.settings.addresses.join(', '), invoice_addresses: s.settings.invoiceAddresses.join(', '),
       forward_to: s.settings.forwardTo ?? '', from_email: s.settings.fromEmail, from_name: s.settings.fromName, reply_to: s.settings.replyTo ?? '', signature: s.settings.signature,
@@ -425,6 +429,7 @@ export function MailServerCard({ onSaved }: { onSaved?: (s: MailStatus) => void 
     return s;
   }), []);
   useEffect(() => { void load().catch(() => setErr(t('common.error'))); }, [load]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (st && !st.settings) return null;
   if (!st || !f) return err ? <Alert tone="danger">{err}</Alert> : <Loading />;
 
   async function save() {

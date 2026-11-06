@@ -15,6 +15,37 @@ import { sha256Hex } from '../lib/crypto';
 import { bodiesOf, htmlToText, parseAddress, type ParsedEmail } from '../email/mime';
 import { addressList, resolveBaseProvider, type OutboundAttachment, type OutboundMessage } from './email/sender';
 import { audit } from './audit-service';
+import type { Actor } from '../http-types';
+
+/**
+ * Who sees which mail: every user sees their own address; OWNER/ADMIN also see the
+ * shared mailboxes (any address not assigned to a user, e.g. info@ or the catch-all).
+ */
+export interface MailScope { own: string | null; shared: boolean; assigned: string[] }
+
+export async function scopeFor(db: D1Database, actor: Actor): Promise<MailScope> {
+  const rows = await all<{ a: string }>(db, `SELECT lower(mail_address) a FROM admin_users WHERE mail_address IS NOT NULL AND mail_address != ''`);
+  return { own: actor.mailAddress?.toLowerCase() || null, shared: actor.role === 'OWNER' || actor.role === 'ADMIN', assigned: rows.map((r) => r.a) };
+}
+
+export function canSee(scope: MailScope, mailbox: string | null): boolean {
+  const mb = (mailbox ?? '').toLowerCase();
+  if (scope.own && mb === scope.own) return true;
+  return scope.shared && !scope.assigned.includes(mb);
+}
+
+/** SQL condition (appends its params) restricting mail_messages to the scope. */
+export function scopeSql(scope: MailScope, params: unknown[]): string {
+  const parts: string[] = [];
+  if (scope.own) { params.push(scope.own); parts.push(`lower(coalesce(mailbox,'')) = ?${params.length}`); }
+  if (scope.shared) {
+    if (scope.assigned.length) {
+      const ph = scope.assigned.map((a) => { params.push(a); return `?${params.length}`; });
+      parts.push(`lower(coalesce(mailbox,'')) NOT IN (${ph.join(',')})`);
+    } else parts.push('1=1');
+  }
+  return parts.length ? `(${parts.join(' OR ')})` : '0=1';
+}
 
 export const FOLDERS = ['INBOX', 'SENT', 'ARCHIVE', 'TRASH'] as const;
 export type Folder = (typeof FOLDERS)[number];
@@ -116,9 +147,11 @@ export async function mailSettings(db: D1Database): Promise<MailSettings> {
   };
 }
 
-/** Addresses the app may send from: the default sender plus the configured mailboxes. */
-export function senderAddresses(s: MailSettings): string[] {
-  return [...new Set([s.fromEmail, ...s.addresses].filter(Boolean))];
+/** Addresses a user may send from: their own mailbox, plus (OWNER/ADMIN) the shared senders. */
+export function senderAddresses(s: MailSettings, scope?: MailScope): string[] {
+  const shared = [s.fromEmail, ...s.addresses].filter((a) => a && !(scope?.assigned ?? []).includes(a));
+  if (!scope) return [...new Set(shared)];
+  return [...new Set([...(scope.own ? [scope.own] : []), ...(scope.shared ? shared : [])])];
 }
 
 export interface ComposeInput {
@@ -128,10 +161,10 @@ export interface ComposeInput {
 }
 
 /** Send a message composed in the app and record it in SENT. */
-export async function sendMail(env: Env, input: ComposeInput, actor: string): Promise<{ id: string; status: string; error?: string }> {
+export async function sendMail(env: Env, input: ComposeInput, actor: string, scope: MailScope): Promise<{ id: string; status: string; error?: string }> {
   const s = await mailSettings(env.DB);
-  const allowed = senderAddresses(s);
-  const from = (input.from || s.fromEmail).toLowerCase();
+  const allowed = senderAddresses(s, scope);
+  const from = (input.from || allowed[0] || '').toLowerCase();
   if (!from) throw new AppError('CONFLICT', 'outbound From email not configured');
   if (!allowed.includes(from)) throw new AppError('VALIDATION_ERROR', 'sender not allowed', { from: 'not_allowed' });
 
@@ -145,12 +178,14 @@ export async function sendMail(env: Env, input: ComposeInput, actor: string): Pr
   let inReplyTo: string | undefined;
   let references: string | undefined;
   if (input.reply_to_id) {
-    const orig = await one<{ message_id: string | null; in_reply_to: string | null }>(env.DB, `SELECT message_id, in_reply_to FROM mail_messages WHERE id=?1`, input.reply_to_id);
+    const orig = await one<{ message_id: string | null; in_reply_to: string | null; mailbox: string | null }>(env.DB, `SELECT message_id, in_reply_to, mailbox FROM mail_messages WHERE id=?1`, input.reply_to_id);
+    if (!orig || !canSee(scope, orig.mailbox)) throw new AppError('NOT_FOUND');
     inReplyTo = orig?.message_id ?? undefined;
     references = orig?.in_reply_to ?? undefined;
   }
   // Forward: re-attach the original attachments.
   if (input.forward_id) {
+    await getMail(env.DB, input.forward_id, scope);
     for (const a of await attachmentsOf(env.DB, input.forward_id)) {
       const obj = await env.ARCHIVE_BUCKET.get(a.r2_key);
       if (obj) attachments.push({ filename: a.filename, mime: a.mime_type, bytes: new Uint8Array(await obj.arrayBuffer()) });
@@ -186,9 +221,9 @@ export async function attachmentsOf(db: D1Database, mailId: string): Promise<Att
 const LIST_COLS = `id, folder, direction, mailbox, thread_id, from_email, from_name, to_email, subject, snippet, has_attachments,
   is_read, is_starred, status, related_type, related_id, created_at`;
 
-export async function listMail(db: D1Database, f: { folder: Folder | 'STARRED'; q?: string; limit: number; offset: number }) {
-  const where: string[] = [];
+export async function listMail(db: D1Database, scope: MailScope, f: { folder: Folder | 'STARRED'; q?: string; limit: number; offset: number }) {
   const params: unknown[] = [];
+  const where: string[] = [scopeSql(scope, params)];
   if (f.folder === 'STARRED') where.push(`is_starred = 1 AND folder != 'TRASH'`);
   else { params.push(f.folder); where.push(`folder = ?${params.length}`); }
   if (f.q) {
@@ -205,16 +240,20 @@ export async function listMail(db: D1Database, f: { folder: Folder | 'STARRED'; 
   return { rows, total: total?.n ?? 0 };
 }
 
-export async function mailCounts(db: D1Database) {
+export async function mailCounts(db: D1Database, scope: MailScope) {
+  const p1: unknown[] = [];
+  const w1 = scopeSql(scope, p1);
   const rows = await all<{ folder: string; n: number; unread: number }>(db,
-    `SELECT folder, count(*) n, sum(CASE WHEN is_read=0 THEN 1 ELSE 0 END) unread FROM mail_messages GROUP BY folder`);
-  const starred = await one<{ n: number }>(db, `SELECT count(*) n FROM mail_messages WHERE is_starred=1 AND folder != 'TRASH'`);
+    `SELECT folder, count(*) n, sum(CASE WHEN is_read=0 THEN 1 ELSE 0 END) unread FROM mail_messages WHERE ${w1} GROUP BY folder`, ...p1);
+  const p2: unknown[] = [];
+  const w2 = scopeSql(scope, p2);
+  const starred = await one<{ n: number }>(db, `SELECT count(*) n FROM mail_messages WHERE is_starred=1 AND folder != 'TRASH' AND ${w2}`, ...p2);
   return { folders: Object.fromEntries(rows.map((r) => [r.folder, { total: r.n, unread: r.unread ?? 0 }])), starred: starred?.n ?? 0 };
 }
 
-export async function getMail(db: D1Database, id: string): Promise<MailRow> {
+export async function getMail(db: D1Database, id: string, scope: MailScope): Promise<MailRow> {
   const m = await one<MailRow>(db, `SELECT * FROM mail_messages WHERE id=?1`, id);
-  if (!m) throw new AppError('NOT_FOUND');
+  if (!m || !canSee(scope, m.mailbox)) throw new AppError('NOT_FOUND');
   return m;
 }
 

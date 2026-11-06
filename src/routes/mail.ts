@@ -9,8 +9,12 @@ import { requireRole } from '../middleware/access';
 import { rateLimit } from '../middleware/rate-limit';
 import { ingestFile } from '../services/einvoice/ingest';
 import {
-  FOLDERS, attachmentsOf, getMail, listMail, mailCounts, mailSettings, mailStatus, purgeMail, sendMail, senderAddresses,
+  FOLDERS, attachmentsOf, canSee, getMail, listMail, mailCounts, mailSettings, mailStatus, purgeMail, scopeFor, sendMail, senderAddresses,
 } from '../services/mail-service';
+import type { Context } from 'hono';
+
+const scope = (c: Context<HonoEnv>) => scopeFor(c.env.DB, c.get('actor')!);
+const MAIL_ROLES = ['OWNER', 'ADMIN', 'ACCOUNTANT', 'MAIL_USER'] as const;
 
 export const mailRoutes = new Hono<HonoEnv>();
 
@@ -19,23 +23,27 @@ mailRoutes.get('/', async (c) => {
   if (folder !== 'STARRED' && !FOLDERS.includes(folder as never)) throw new AppError('VALIDATION_ERROR', 'unknown folder');
   const limit = Math.min(100, Math.max(1, Number(c.req.query('limit') ?? 50) || 50));
   const offset = Math.max(0, Number(c.req.query('offset') ?? 0) || 0);
-  return ok(c, await listMail(c.env.DB, { folder: folder as never, q: c.req.query('q')?.trim() || undefined, limit, offset }));
+  return ok(c, await listMail(c.env.DB, await scope(c), { folder: folder as never, q: c.req.query('q')?.trim() || undefined, limit, offset }));
 });
 
-mailRoutes.get('/counts', async (c) => ok(c, await mailCounts(c.env.DB)));
+mailRoutes.get('/counts', async (c) => ok(c, await mailCounts(c.env.DB, await scope(c))));
 
 mailRoutes.get('/status', async (c) => {
-  const [status, s] = await Promise.all([mailStatus(c.env), mailSettings(c.env.DB)]);
-  return ok(c, { ...status, senders: senderAddresses(s), settings: s });
+  const [status, s, sc] = await Promise.all([mailStatus(c.env), mailSettings(c.env.DB), scope(c)]);
+  const role = c.get('actor')!.role;
+  const canManage = role === 'OWNER' || role === 'ADMIN';
+  return ok(c, { ...status, senders: senderAddresses(s, sc), settings: canManage ? s : null, me: { address: sc.own, canManage, shared: sc.shared } });
 });
 
 mailRoutes.get('/:id', async (c) => {
-  const m = await getMail(c.env.DB, c.req.param('id'));
+  const m = await getMail(c.env.DB, c.req.param('id'), await scope(c));
   const [attachments, thread] = await Promise.all([
     attachmentsOf(c.env.DB, m.id),
-    c.env.DB.prepare(`SELECT id, direction, from_email, from_name, subject, snippet, created_at, status FROM mail_messages
-      WHERE thread_id=?1 AND id != ?2 AND folder != 'TRASH' ORDER BY created_at`).bind(m.thread_id, m.id).all(),
+    c.env.DB.prepare(`SELECT id, mailbox, direction, from_email, from_name, subject, snippet, created_at, status FROM mail_messages
+      WHERE thread_id=?1 AND id != ?2 AND folder != 'TRASH' ORDER BY created_at`).bind(m.thread_id, m.id).all<{ mailbox: string | null }>(),
   ]);
+  const sc = await scope(c);
+  thread.results = thread.results.filter((x) => canSee(sc, x.mailbox));
   if (!m.is_read && c.get('actor')?.role !== 'READ_ONLY') await run(c.env.DB, `UPDATE mail_messages SET is_read=1 WHERE id=?1`, m.id);
   const { html_body, ...rest } = m;
   return ok(c, { ...rest, is_read: 1, has_html: !!html_body, attachments, thread: thread.results });
@@ -43,7 +51,7 @@ mailRoutes.get('/:id', async (c) => {
 
 /** The HTML body, served under a sandbox CSP (no scripts, no forms; remote images only on request). */
 mailRoutes.get('/:id/html', async (c) => {
-  const m = await getMail(c.env.DB, c.req.param('id'));
+  const m = await getMail(c.env.DB, c.req.param('id'), await scope(c));
   const remote = c.req.query('images') === '1';
   let html = m.html_body ?? '';
   // Inline images (cid:) → this mailbox's attachment URLs.
@@ -65,7 +73,8 @@ mailRoutes.get('/:id/html', async (c) => {
 });
 
 mailRoutes.get('/:id/attachments/:att', async (c) => {
-  const att = (await attachmentsOf(c.env.DB, c.req.param('id'))).find((a) => a.id === c.req.param('att'));
+  const m = await getMail(c.env.DB, c.req.param('id'), await scope(c));
+  const att = (await attachmentsOf(c.env.DB, m.id)).find((a) => a.id === c.req.param('att'));
   if (!att) throw new AppError('NOT_FOUND');
   const obj = await c.env.ARCHIVE_BUCKET.get(att.r2_key);
   if (!obj) throw new AppError('NOT_FOUND');
@@ -81,7 +90,7 @@ mailRoutes.get('/:id/attachments/:att', async (c) => {
 });
 
 mailRoutes.get('/:id/raw', async (c) => {
-  const m = await getMail(c.env.DB, c.req.param('id'));
+  const m = await getMail(c.env.DB, c.req.param('id'), await scope(c));
   if (!m.raw_r2_key) throw new AppError('NOT_FOUND');
   const obj = await c.env.ARCHIVE_BUCKET.get(m.raw_r2_key);
   if (!obj) throw new AppError('NOT_FOUND');
@@ -92,7 +101,7 @@ const patchSchema = z.object({
   is_read: z.boolean().optional(), is_starred: z.boolean().optional(), folder: z.enum(FOLDERS).optional(),
 });
 mailRoutes.patch('/:id', async (c) => {
-  const m = await getMail(c.env.DB, c.req.param('id'));
+  const m = await getMail(c.env.DB, c.req.param('id'), await scope(c));
   const b = patchSchema.parse(await c.req.json());
   if (b.folder === 'SENT' && m.direction !== 'OUT') throw new AppError('VALIDATION_ERROR', 'only sent mail belongs in SENT');
   if (b.folder === 'INBOX' && m.direction !== 'IN') throw new AppError('VALIDATION_ERROR', 'only received mail belongs in INBOX');
@@ -104,7 +113,9 @@ mailRoutes.patch('/:id', async (c) => {
 /** Bulk flag/move for the list toolbar. */
 mailRoutes.post('/bulk', async (c) => {
   const b = z.object({ ids: z.array(z.string()).min(1).max(200) }).merge(patchSchema).parse(await c.req.json());
+  const sc = await scope(c);
   for (const id of b.ids) {
+    try { await getMail(c.env.DB, id, sc); } catch { continue; }
     await run(c.env.DB, `UPDATE mail_messages SET is_read=coalesce(?2,is_read), is_starred=coalesce(?3,is_starred),
       folder=CASE WHEN ?4 IS NULL THEN folder WHEN ?4='INBOX' AND direction!='IN' THEN 'SENT' WHEN ?4='SENT' AND direction!='OUT' THEN 'INBOX' ELSE ?4 END WHERE id=?1`,
     id, b.is_read === undefined ? null : b.is_read ? 1 : 0, b.is_starred === undefined ? null : b.is_starred ? 1 : 0, b.folder ?? null);
@@ -113,8 +124,8 @@ mailRoutes.post('/bulk', async (c) => {
 });
 
 /** Move to trash; a message already in trash is deleted for good. */
-mailRoutes.delete('/:id', requireRole('OWNER', 'ADMIN', 'ACCOUNTANT'), async (c) => {
-  const m = await getMail(c.env.DB, c.req.param('id'));
+mailRoutes.delete('/:id', requireRole(...MAIL_ROLES), async (c) => {
+  const m = await getMail(c.env.DB, c.req.param('id'), await scope(c));
   if (m.folder === 'TRASH') { await purgeMail(c.env, m.id); return ok(c, { deleted: true }); }
   await run(c.env.DB, `UPDATE mail_messages SET folder='TRASH' WHERE id=?1`, m.id);
   return ok(c, { deleted: false });
@@ -131,7 +142,7 @@ const sendSchema = z.object({
   reply_to_id: z.string().optional(),
   forward_id: z.string().optional(),
 });
-mailRoutes.post('/send', requireRole('OWNER', 'ADMIN', 'ACCOUNTANT'), rateLimit({ key: 'mail-send', limit: 30, windowMs: 600_000 }), async (c) => {
+mailRoutes.post('/send', requireRole(...MAIL_ROLES), rateLimit({ key: 'mail-send', limit: 30, windowMs: 600_000 }), async (c) => {
   const body = sendSchema.parse(await c.req.json());
   const emailish = /^[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+$/;
   for (const field of ['to', 'cc', 'bcc'] as const) {
@@ -139,13 +150,13 @@ mailRoutes.post('/send', requireRole('OWNER', 'ADMIN', 'ACCOUNTANT'), rateLimit(
       if (!emailish.test(/<([^>]+)>/.exec(a)?.[1] ?? a)) throw new AppError('VALIDATION_ERROR', 'invalid address', { [field]: 'invalid' });
     }
   }
-  const res = await sendMail(c.env, body, c.get('actor')!.email);
+  const res = await sendMail(c.env, body, c.get('actor')!.email, await scope(c));
   return ok(c, res, res.status === 'SENT' ? 201 : 202);
 });
 
 /** Import an attachment as an incoming e-invoice (same pipeline as upload). */
 mailRoutes.post('/:id/attachments/:att/import', requireRole('OWNER', 'ADMIN', 'ACCOUNTANT'), async (c) => {
-  const m = await getMail(c.env.DB, c.req.param('id'));
+  const m = await getMail(c.env.DB, c.req.param('id'), await scope(c));
   const att = (await attachmentsOf(c.env.DB, m.id)).find((a) => a.id === c.req.param('att'));
   if (!att) throw new AppError('NOT_FOUND');
   const obj = await c.env.ARCHIVE_BUCKET.get(att.r2_key);

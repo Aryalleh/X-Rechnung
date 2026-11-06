@@ -294,28 +294,53 @@ function Wrap({ bare, title, children }: { bare?: boolean; title: string; childr
   return bare ? <div className="card p-6">{children}</div> : <Section title={title}>{children}</Section>;
 }
 
-const ROLES = ['ADMIN', 'ACCOUNTANT', 'READ_ONLY'] as const;
+const ROLES = ['ADMIN', 'ACCOUNTANT', 'READ_ONLY', 'MAIL_USER'] as const;
 /** What each role may do (mirrors requireRole() checks on the server). */
 const PERMS: Record<string, string[]> = {
-  OWNER: ['FULL_ACCESS', 'MANAGE_USERS', 'ISSUE_INVOICE', 'MANAGE_CONTRACTS'],
-  ADMIN: ['ISSUE_INVOICE', 'MANAGE_CUSTOMERS', 'MANAGE_CONTRACTS', 'SETTINGS'],
-  ACCOUNTANT: ['ISSUE_INVOICE', 'MANAGE_CUSTOMERS', 'READ_REPORTS'],
-  READ_ONLY: ['READ_REPORTS'],
+  OWNER: ['FULL_ACCESS', 'MANAGE_USERS', 'ISSUE_INVOICE', 'MANAGE_CONTRACTS', 'MAILBOX'],
+  ADMIN: ['ISSUE_INVOICE', 'MANAGE_CUSTOMERS', 'MANAGE_CONTRACTS', 'SETTINGS', 'MAILBOX'],
+  ACCOUNTANT: ['ISSUE_INVOICE', 'MANAGE_CUSTOMERS', 'READ_REPORTS', 'MAILBOX'],
+  READ_ONLY: ['READ_REPORTS', 'MAILBOX'],
+  MAIL_USER: ['MAILBOX'],
 };
+
+function SetMailbox({ row, onClose, onSaved }: { row: { id: string; email: string; mail_address: string | null }; onClose: () => void; onSaved: () => void }) {
+  const i18n = useI18n();
+  const { t } = i18n;
+  const [v, setV] = useState(row.mail_address ?? '');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  async function save() {
+    setErr(null); setBusy(true);
+    try { await api.put(`/settings/users/${row.id}/mailbox`, { mail_address: v.trim() || null }); onSaved(); }
+    catch (e) { setErr(errorText(e, i18n)); } finally { setBusy(false); }
+  }
+  return (
+    <Modal open onClose={onClose} title={`${t('team.mailbox')}: ${row.email}`}>
+      <form className="grid gap-4" onSubmit={(e) => { e.preventDefault(); void save(); }}>
+        {err && <Alert tone="danger" onClose={() => setErr(null)}>{err}</Alert>}
+        <Field label={t('team.mailbox')} htmlFor="mb-a" hint={t('team.mailbox_hint')}><input id="mb-a" type="email" className="input" dir="ltr" autoFocus value={v} onChange={(e) => setV(e.target.value)} /></Field>
+        <button className="btn-primary justify-center" disabled={busy}>{busy ? <Spinner /> : <Icon name="check" />}{t('common.save')}</button>
+      </form>
+    </Modal>
+  );
+}
 
 function Users() {
   const i18n = useI18n();
   const { t, tx, date } = i18n;
   const toast = useToast();
-  type Row = { id: string; email: string; full_name: string | null; role: string; status: string; last_login_at: string | null; has_password: number };
+  type Row = { id: string; email: string; full_name: string | null; role: string; status: string; last_login_at: string | null; has_password: number; mail_address: string | null; mail_only: number };
   const [rows, setRows] = useState<Row[] | null>(null);
+  const [mbFor, setMbFor] = useState<Row | null>(null);
   const [me, setMe] = useState<{ email: string; role: string; hasPassword: boolean } | null>(null);
-  const [form, setForm] = useState({ email: '', full_name: '', role: 'ADMIN', password: '' });
+  const [form, setForm] = useState({ email: '', full_name: '', role: 'ADMIN', password: '', mail_address: '' });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [pwFor, setPwFor] = useState<Row | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
-  const load = () => api.get<Row[]>('/settings/users').then(setRows).catch(() => setRows([]));
+  // Email-only users are stored as READ_ONLY + mail_only; show them as their own role.
+  const load = () => api.get<Row[]>('/settings/users').then((r) => setRows(r.map((x) => (x.mail_only ? { ...x, role: 'MAIL_USER' } : x)))).catch(() => setRows([]));
   useEffect(() => { void load(); api.get<NonNullable<typeof me>>('/auth/me').then(setMe).catch(() => undefined); }, []);
   const isOwner = me?.role === 'OWNER';
 
@@ -329,7 +354,7 @@ function Users() {
     setErr(null); setBusy(true);
     try {
       await api.post('/settings/users', form);
-      setForm({ email: '', full_name: '', role: 'ADMIN', password: '' }); toast(t('common.saved')); await load();
+      setForm({ email: '', full_name: '', role: 'ADMIN', password: '', mail_address: '' }); toast(t('common.saved')); await load();
     } catch (e) { setErr(errorText(e, i18n)); } finally { setBusy(false); }
   }
 
@@ -375,6 +400,12 @@ function Users() {
                     <div className="truncate" dir="ltr">{r.email}</div>
                     <div className={`flex items-center gap-1 text-xs font-medium ${r.has_password ? 'text-primary-fg' : 'text-warning'}`}>
                       <Icon name={r.has_password ? 'lock' : 'alert'} className="h-3 w-3" />{t(r.has_password ? 'set.user_has_pw' : 'set.user_no_pw')}
+                    </div>
+                    <div className="mt-0.5 flex items-center gap-1 text-xs text-muted">
+                      <Icon name="mail" className="h-3 w-3" />
+                      {isOwner ? (
+                        <button className="truncate hover:text-fg hover:underline" dir="ltr" title={t('team.mailbox_set')} onClick={() => setMbFor(r)}>{r.mail_address || t('team.mailbox_none')}</button>
+                      ) : <span className="truncate" dir="ltr">{r.mail_address || t('team.mailbox_none')}</span>}
                     </div>
                   </td>
                   <td className="max-xl:hidden">
@@ -427,13 +458,15 @@ function Users() {
         <form className="grid gap-4" onSubmit={(e) => { e.preventDefault(); void add().then(() => setInviteOpen(false)); }}>
           <Field label={t('set.user_email')} htmlFor="u-e"><input id="u-e" type="email" required className="input" dir="ltr" autoComplete="off" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
           <Field label={t('set.user_name')} htmlFor="u-n"><input id="u-n" className="input" dir="auto" value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} /></Field>
-          <Field label={t('set.user_role')} htmlFor="u-r"><select id="u-r" className="input" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}><Options values={ROLES} prefix="role." /></select></Field>
+          <Field label={t('set.user_role')} htmlFor="u-r" {...(form.role === 'MAIL_USER' ? { hint: t('team.mail_only_desc') } : {})}><select id="u-r" className="input" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}><Options values={ROLES} prefix="role." /></select></Field>
+          <Field label={t('team.mailbox')} htmlFor="u-m" hint={t('team.mailbox_hint')}><input id="u-m" type="email" className="input" dir="ltr" autoComplete="off" placeholder={form.role === 'MAIL_USER' ? form.email : 'name@…'} value={form.mail_address} onChange={(e) => setForm({ ...form, mail_address: e.target.value })} /></Field>
           <Field label={t('set.user_password')} htmlFor="u-p" hint={t('set.pw_hint')}>
             <PasswordInput id="u-p" value={form.password} onChange={(v) => setForm({ ...form, password: v })} autoComplete="new-password" minLength={10} />
           </Field>
           <button className="btn-primary justify-center" disabled={busy}>{busy ? <Spinner /> : <Icon name="plus" />}{t('set.users_add')}</button>
         </form>
       </Modal>
+      {mbFor && <SetMailbox row={mbFor} onClose={() => setMbFor(null)} onSaved={() => { setMbFor(null); toast(t('common.saved')); void load(); }} />}
       {pwFor && <SetUserPassword row={pwFor} onClose={() => setPwFor(null)} onSaved={() => { setPwFor(null); toast(t('set.pw_set')); void load(); }} />}
     </div>
   );

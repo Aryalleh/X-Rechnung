@@ -74,7 +74,7 @@ export function App() {
   );
 }
 
-export interface Me { email: string; role: string; fullName: string | null; via: string | null; hasPassword: boolean }
+export interface Me { email: string; role: string; fullName: string | null; via: string | null; hasPassword: boolean; mailAddress?: string | null }
 
 /** Shows the login page until /auth/me succeeds; returns to it on any 401. */
 function AuthGate({ appName }: { appName: string }) {
@@ -126,19 +126,28 @@ function Shell({ appName, me, onLogout }: { appName: string; me: Me; onLogout: (
   const [barEl, setBarEl] = useState<HTMLDivElement | null>(null);
   const [barCount, setBarCount] = useState(0);
 
+  // Email-only users get the mailbox and nothing else.
+  const mailOnly = me.role === 'MAIL_USER';
+
   // Sidebar counters: unpaid received invoices and contracts waiting for our countersignature.
   useEffect(() => {
+    if (mailOnly) {
+      api.get<{ folders: Record<string, { unread: number }> }>('/mail/counts')
+        .then((r) => setBadges({ '/mail': r.folders.INBOX?.unread ?? 0 })).catch(() => {});
+      return;
+    }
     api.get<{ payment_status: string }[]>('/received')
       .then((r) => setBadges((b) => ({ ...b, '/inbox': r.filter((x) => x.payment_status !== 'PAID').length }))).catch(() => {});
     api.get<{ folders: Record<string, { unread: number }> }>('/mail/counts')
       .then((r) => setBadges((b) => ({ ...b, '/mail': r.folders.INBOX?.unread ?? 0 }))).catch(() => {});
     api.get<{ status: string }[]>('/contracts')
       .then((r) => setBadges((b) => ({ ...b, '/contracts': r.filter((x) => x.status === 'CUSTOMER_SIGNED').length }))).catch(() => {});
-  }, [loc.pathname]);
+  }, [loc.pathname, mailOnly]);
 
   useEffect(() => { setDrawer(false); }, [loc.pathname]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (mailOnly) return;
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setPalette(true); return; }
       if (isTyping() || e.ctrlKey || e.metaKey || e.altKey) return;
       if (e.key === 'n') nav('/invoices/new');
@@ -147,7 +156,7 @@ function Shell({ appName, me, onLogout }: { appName: string; me: Me; onLogout: (
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [nav]);
+  }, [nav, mailOnly]);
 
   const item = (n: { to: string; key: MsgKey; icon: IconName }, end: boolean) => (
     <NavLink key={n.to} to={n.to} end={end}
@@ -168,9 +177,10 @@ function Shell({ appName, me, onLogout }: { appName: string; me: Me; onLogout: (
         <div className="mt-1.5 ps-11 text-xs text-muted">{t('app.tagline')}</div>
       </div>
       <div className="flex flex-col gap-1">
-        {NAV.map((n) => item(n, n.to === '/' || n.to === '/invoices'))}
+        {(mailOnly ? NAV.filter((n) => n.to === '/mail') : NAV).map((n) => item(n, n.to === '/' || n.to === '/invoices'))}
       </div>
-      <div className="eyebrow mb-2 mt-8 px-3 text-[11px]">{t('nav.config')}</div>
+      {mailOnly && me.mailAddress && <div className="mt-6 truncate px-3 text-xs text-muted" dir="ltr">{me.mailAddress}</div>}
+      {!mailOnly && <><div className="eyebrow mb-2 mt-8 px-3 text-[11px]">{t('nav.config')}</div>
       <div className="flex flex-col gap-1">
         {NAV_CONFIG.map((n) => (
           <NavLink key={n.to} to={n.to}
@@ -182,7 +192,7 @@ function Shell({ appName, me, onLogout }: { appName: string; me: Me; onLogout: (
             <span className="flex-1">{t(n.key)}</span>
           </NavLink>
         ))}
-      </div>
+      </div></>}
     </nav>
   );
 
@@ -206,12 +216,12 @@ function Shell({ appName, me, onLogout }: { appName: string; me: Me; onLogout: (
           {/* Pages with their own top bar (back arrow, title, actions) render into this slot. */}
           <div ref={setBarEl} className={barCount > 0 ? 'flex min-w-0 flex-1 items-center' : 'hidden'} />
           {barCount === 0 && <>
-            <button onClick={() => setPalette(true)}
+            {mailOnly ? <div className="flex-1" /> : <button onClick={() => setPalette(true)}
               className="flex h-10 min-w-0 flex-1 items-center gap-2.5 rounded-lg bg-surface-2 px-3.5 text-sm text-muted transition-colors hover:bg-line sm:max-w-2xl">
               <Icon name="search" className="h-[18px] w-[18px]" />
               <span className="truncate">{t('nav.search')}</span>
               <kbd className="ms-auto hidden rounded border border-line-strong bg-surface px-1.5 font-mono text-[11px] sm:inline" dir="ltr">Ctrl K</kbd>
-            </button>
+            </button>}
             <div className="ms-auto flex items-center gap-1">
               <LangSwitch compact />
               <ThemeSwitch />
@@ -221,7 +231,13 @@ function Shell({ appName, me, onLogout }: { appName: string; me: Me; onLogout: (
           </>}
         </header>
         <main className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-8 sm:py-8">
-          <Routes>
+          {mailOnly ? (
+            <Routes>
+              <Route path="/mail" element={<Mail />} />
+              <Route path="/mail/:id" element={<Mail />} />
+              <Route path="*" element={<Navigate to="/mail" replace />} />
+            </Routes>
+          ) : <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/invoices" element={<Invoices />} />
             <Route path="/invoices/new" element={<NewInvoice />} />
@@ -234,7 +250,7 @@ function Shell({ appName, me, onLogout }: { appName: string; me: Me; onLogout: (
             <Route path="/mail/:id" element={<Mail />} />
             <Route path="/settings/*" element={<Settings />} />
             <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
+          </Routes>}
         </main>
       </div>
       <CommandPalette open={palette} onClose={() => setPalette(false)} />

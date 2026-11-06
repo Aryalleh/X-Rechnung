@@ -33,7 +33,7 @@ authRoutes.post('/logout', async (c) => {
 authRoutes.get('/me', requireAccess, async (c) => {
   const actor = c.get('actor')!;
   const admin = await findAdminByEmail(c.env.DB, actor.email);
-  return ok(c, { email: actor.email, role: actor.role, fullName: admin?.full_name ?? null, via: actor.via ?? null, hasPassword: Boolean(admin?.has_password) });
+  return ok(c, { email: actor.email, role: actor.role, fullName: admin?.full_name ?? null, via: actor.via ?? null, hasPassword: Boolean(admin?.has_password), mailAddress: admin?.mail_address ?? null });
 });
 
 /** Change own password (requires the current one if a password is set). */

@@ -3,7 +3,10 @@ import type { Env } from './config/env';
 /** Authenticated actor: from a password session or a Cloudflare Access JWT. */
 export interface Actor {
   email: string;
-  role: 'OWNER' | 'ADMIN' | 'ACCOUNTANT' | 'READ_ONLY';
+  /** MAIL_USER = mailbox-only user (admin_users.mail_only = 1). */
+  role: 'OWNER' | 'ADMIN' | 'ACCOUNTANT' | 'READ_ONLY' | 'MAIL_USER';
+  /** The user's own mailbox address, if one is assigned. */
+  mailAddress?: string | null;
   identityId?: string;
   /** admin_users.id (set for password sessions). */
   userId?: string;
