@@ -28,6 +28,7 @@ import { documentRoutes } from './routes/documents';
 import { exportRoutes } from './routes/export';
 
 import { handleInboundEmail } from './email/inbound';
+import { mailRoutes } from './routes/mail';
 import { handleQueue } from './queue/consumer';
 import { handleScheduled } from './cron';
 
@@ -67,6 +68,7 @@ app.route('/api/documents', documentRoutes);
 app.route('/api/export', exportRoutes);
 app.route('/api/contracts', contractRoutes);
 app.route('/api/contract-templates', contractTemplateRoutes);
+app.route('/api/mail', mailRoutes);
 
 // Centralized error handler → standardized envelope.
 app.onError((err, c) => fail(c, err, c.env.ENVIRONMENT));

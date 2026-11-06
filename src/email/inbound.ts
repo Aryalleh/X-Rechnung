@@ -15,6 +15,7 @@ import { audit } from '../services/audit-service';
 import { parseEmail } from './mime';
 import { ingestFile } from '../services/einvoice/ingest';
 import { UPLOAD_LIMITS } from '../config/constants';
+import { mailSettings, storeInbound } from '../services/mail-service';
 
 interface CfEmailMessage {
   readonly from: string;
@@ -23,6 +24,7 @@ interface CfEmailMessage {
   readonly raw: ReadableStream<Uint8Array>;
   readonly rawSize: number;
   setReject(reason: string): void;
+  forward(rcptTo: string, headers?: Headers): Promise<void>;
 }
 
 const CANDIDATE_TYPES = new Set(['application/xml', 'text/xml', 'application/pdf', 'application/octet-stream']);
@@ -57,8 +59,28 @@ export async function handleInboundEmail(message: CfEmailMessage, env: Env, ctx:
   await run(env.DB, `UPDATE received_emails SET raw_r2_key = ?2 WHERE id = ?1`, emailId, storedEml.r2Key);
   await audit(env.DB, { entityType: 'received_email', entityId: emailId, eventType: 'EMAIL_RECEIVED', metadata: { from: message.from, sha256: rawSha } });
 
-  // Parse MIME and ingest each candidate attachment.
   const parsed = parseEmail(raw);
+  const settings = await mailSettings(env.DB);
+
+  // Mailbox copy: every message lands in the INBOX (never blocks e-invoice intake).
+  let mailId: string | null = null;
+  try {
+    mailId = await storeInbound(env, { parsed, envelopeFrom: message.from, envelopeTo: message.to, size: raw.byteLength, rawKey: storedEml.r2Key, receivedEmailId: emailId });
+  } catch (err) {
+    await run(env.DB, `INSERT INTO job_failures (id, job_type, entity_type, entity_id, error_text) VALUES (?1,'STORE_MAIL','received_email',?2,?3)`,
+      newId('job'), emailId, err instanceof Error ? err.message : String(err));
+  }
+  // Optional copy to a personal mailbox (must be a verified Email Routing destination).
+  if (settings.forwardTo) ctx.waitUntil(message.forward(settings.forwardTo).catch(() => undefined));
+
+  // E-invoice intake: only mail sent to the invoice addresses when those are configured, otherwise every message.
+  const rcpt = message.to.toLowerCase();
+  if (settings.invoiceAddresses.length && !settings.invoiceAddresses.includes(rcpt)) {
+    await run(env.DB, `UPDATE received_emails SET status = 'PROCESSED' WHERE id = ?1`, emailId);
+    return;
+  }
+
+  // Parse MIME and ingest each candidate attachment.
   let ingested = 0;
   for (const part of parsed.parts) {
     const isCandidate =
@@ -68,7 +90,7 @@ export async function handleInboundEmail(message: CfEmailMessage, env: Env, ctx:
     if (part.body.byteLength > UPLOAD_LIMITS.maxAttachmentBytes) continue;
 
     try {
-      await ingestFile(env, {
+      const res = await ingestFile(env, {
         bytes: part.body,
         filename: part.filename ?? `attachment-${ingested + 1}`,
         declaredMime: part.contentType,
@@ -76,6 +98,9 @@ export async function handleInboundEmail(message: CfEmailMessage, env: Env, ctx:
         receivedEmailId: emailId,
       });
       await audit(env.DB, { entityType: 'received_email', entityId: emailId, eventType: 'ATTACHMENT_ARCHIVED', metadata: { filename: part.filename } });
+      if (mailId && res.receivedInvoiceId && ingested === 0) {
+        await run(env.DB, `UPDATE mail_messages SET related_type='received_invoice', related_id=?2 WHERE id=?1`, mailId, res.receivedInvoiceId);
+      }
       ingested++;
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);

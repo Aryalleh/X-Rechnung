@@ -83,7 +83,7 @@ export async function sendInvoiceEmail(env: Env, invoiceId: string, input: SendI
   );
 
   try {
-    const provider = await resolveProvider(env);
+    const provider = await resolveProvider(env, { related: { type: 'invoice', id: invoiceId } });
     const msg: OutboundMessage = {
       from,
       fromName: (out.from_name as string) || seller?.full_name || '',

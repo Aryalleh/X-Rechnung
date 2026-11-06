@@ -214,7 +214,7 @@ async function emailLink(env: Env, c: ContractRow, to: string, link: string, mes
     en: { s: `Contract for signature: ${c.title}`, b: `Hello,\n\nplease review and sign the contract "${c.title}" (${c.contract_number}) online:\n\n${link}\n\nThe link is valid for ${days} days.\n\nKind regards\n${name}` },
     fa: { s: `قرارداد برای امضا: ${c.title}`, b: `با سلام،\n\nلطفاً قرارداد «${c.title}» (${c.contract_number}) را از طریق لینک زیر بررسی و امضا کنید:\n\n${link}\n\nاین لینک ${days} روز معتبر است.\n\nبا احترام\n${name}` },
   }[c.language];
-  const provider = await resolveProvider(env);
+  const provider = await resolveProvider(env, { related: { type: 'contract', id: c.id } });
   await provider.send(env, { from, fromName: (out.from_name as string) || name, to, subject: txt.s, text: message ? `${message}\n\n${link}` : txt.b });
 }
 
@@ -325,7 +325,7 @@ async function emailCompleted(env: Env, c: ContractRow, to: string, link: string
     en: { s: `Contract signed: ${c.title}`, b: `Hello,\n\nthe contract "${c.title}" (${c.contract_number}) is now signed by both parties. Your PDF copy:\n\n${link}\n\nKind regards\n${name}` },
     fa: { s: `قرارداد امضا شد: ${c.title}`, b: `با سلام،\n\nقرارداد «${c.title}» (${c.contract_number}) اکنون توسط هر دو طرف امضا شده است. نسخهٔ PDF شما:\n\n${link}\n\nبا احترام\n${name}` },
   }[c.language];
-  const provider = await resolveProvider(env);
+  const provider = await resolveProvider(env, { related: { type: 'contract', id: c.id } });
   await provider.send(env, { from, fromName: (out.from_name as string) || name, to, subject: txt.s, text: txt.b });
 }
 

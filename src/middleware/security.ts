@@ -15,10 +15,13 @@ export const securityHeaders: MiddlewareHandler<HonoEnv> = async (c, next) => {
   c.res = new Response(c.res.body, c.res);
   const h = c.res.headers;
   // The invoice HTML preview is embedded by the SPA's "live preview" panel: allow same-origin framing for it only.
-  const framable = /^\/api\/invoices\/[^/]+\/preview$/.test(c.req.path);
+  // Mail HTML bodies bring their own (stricter) sandbox policy.
+  const mailCsp = h.get('X-Mail-Csp');
+  h.delete('X-Mail-Csp');
+  const framable = !!mailCsp || /^\/api\/invoices\/[^/]+\/preview$/.test(c.req.path);
   h.set(
     'Content-Security-Policy',
-    [
+    mailCsp ?? [
       "default-src 'self'",
       "script-src 'self'",
       "style-src 'self' 'unsafe-inline'",

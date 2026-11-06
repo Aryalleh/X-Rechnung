@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { MailServerCard } from './Mail';
 import { api } from '../api';
 import { errorText, useI18n } from '../i18n';
 import type { InstallMode, Lang, MsgKey } from '../i18n';
@@ -340,11 +341,14 @@ function Users() {
       </div>
       {err && <Alert tone="danger" onClose={() => setErr(null)}>{err}</Alert>}
 
-      <div className="mb-4">
-        <h2 className="text-lg font-bold">{t('team.email_title')}</h2>
-        <p className="text-[13px] text-muted">{t('team.email_sub')}</p>
+      <div className="mb-4 flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <h2 className="text-lg font-bold">{t('team.email_title')}</h2>
+          <p className="text-[13px] text-muted">{t('team.email_sub')}</p>
+        </div>
+        <NavLink to="/mail" className="btn-secondary btn-sm"><Icon name="mail" />{t('team.mail_open')}</NavLink>
       </div>
-      <GenericGroup bare title={t('team.email_title')} path="/settings/group/EMAIL_OUTBOUND" />
+      <MailServerCard />
 
       <h2 className="mb-4 mt-10 text-lg font-bold">{t('team.members_perms')}</h2>
       <section className="card overflow-hidden">

@@ -15,6 +15,7 @@ import { InvoiceDetail } from './pages/InvoiceDetail';
 import { Invoices } from './pages/Invoices';
 import { Inbox } from './pages/Inbox';
 import { InboxDetail } from './pages/InboxDetail';
+import { Mail } from './pages/Mail';
 import { Settings } from './pages/Settings';
 import { Login } from './pages/Login';
 import { Contracts } from './pages/Contracts';
@@ -108,6 +109,7 @@ const NAV: { to: string; key: MsgKey; icon: IconName }[] = [
   { to: '/contracts', key: 'nav.contracts', icon: 'fileSign' },
   { to: '/customers', key: 'nav.customers', icon: 'users' },
   { to: '/inbox', key: 'nav.inbox', icon: 'inbox' },
+  { to: '/mail', key: 'nav.mail', icon: 'mail' },
 ];
 const NAV_CONFIG: { to: string; key: MsgKey; icon: IconName; end?: boolean }[] = [
   { to: '/settings/users', key: 'nav.team', icon: 'user' },
@@ -128,6 +130,8 @@ function Shell({ appName, me, onLogout }: { appName: string; me: Me; onLogout: (
   useEffect(() => {
     api.get<{ payment_status: string }[]>('/received')
       .then((r) => setBadges((b) => ({ ...b, '/inbox': r.filter((x) => x.payment_status !== 'PAID').length }))).catch(() => {});
+    api.get<{ folders: Record<string, { unread: number }> }>('/mail/counts')
+      .then((r) => setBadges((b) => ({ ...b, '/mail': r.folders.INBOX?.unread ?? 0 }))).catch(() => {});
     api.get<{ status: string }[]>('/contracts')
       .then((r) => setBadges((b) => ({ ...b, '/contracts': r.filter((x) => x.status === 'CUSTOMER_SIGNED').length }))).catch(() => {});
   }, [loc.pathname]);
@@ -226,6 +230,8 @@ function Shell({ appName, me, onLogout }: { appName: string; me: Me; onLogout: (
             <Route path="/contracts/*" element={<Contracts />} />
             <Route path="/inbox" element={<Inbox />} />
             <Route path="/inbox/:id" element={<InboxDetail />} />
+            <Route path="/mail" element={<Mail />} />
+            <Route path="/mail/:id" element={<Mail />} />
             <Route path="/settings/*" element={<Settings />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
