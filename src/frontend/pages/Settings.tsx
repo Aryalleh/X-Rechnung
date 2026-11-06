@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { NavLink, Routes, Route, Navigate } from 'react-router-dom';
+import { NavLink, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { api } from '../api';
 import { errorText, useI18n } from '../i18n';
 import type { InstallMode, Lang, MsgKey } from '../i18n';
@@ -41,13 +41,13 @@ const NAV: { to: string; key: MsgKey; icon: IconName }[] = [
   { to: 'invoice', key: 'set.invoice', icon: 'file' },
   { to: 'general', key: 'set.general', icon: 'settings' },
   { to: 'einvoice', key: 'set.einvoice', icon: 'inbox' },
-  { to: 'users', key: 'set.users', icon: 'users' },
   { to: 'cloudflare', key: 'set.cloudflare', icon: 'globe' },
   { to: 'status', key: 'set.status', icon: 'activity' },
 ];
 
 export function Settings() {
   const { t } = useI18n();
+  if (useLocation().pathname.startsWith('/settings/users')) return <Users />;
   return (
     <div>
       <PageHeader title={t('set.title')} />
@@ -69,7 +69,6 @@ export function Settings() {
             <Route path="general" element={<GenericGroup title={t('set.general')} path="/settings/general" hide={['invoice_mode', 'currency', 'invoice_language']} />} />
             <Route path="invoice" element={<GenericGroup title={t('set.invoice')} path="/settings/invoice" />} />
             <Route path="einvoice" element={<GenericGroup title={t('set.einvoice')} path="/settings/einvoice" />} />
-            <Route path="users" element={<><Users /><div className="mt-5"><GenericGroup title={t('team.email_title')} path="/settings/group/EMAIL_OUTBOUND" /></div></>} />
             <Route path="cloudflare" element={<GenericGroup title={t('set.cloudflare')} path="/settings/cloudflare" readOnly />} />
             <Route path="status" element={<SystemStatus />} />
             <Route path="*" element={<Navigate to="." replace />} />
@@ -236,7 +235,7 @@ function CurrencySettings() {
   );
 }
 
-function GenericGroup({ title, path, readOnly, hide = [] }: { title: string; path: string; readOnly?: boolean; hide?: string[] }) {
+function GenericGroup({ title, path, readOnly, hide = [], bare }: { title: string; path: string; readOnly?: boolean; hide?: string[]; bare?: boolean }) {
   const i18n = useI18n();
   const { t, lang } = i18n;
   const toast = useToast();
@@ -256,7 +255,7 @@ function GenericGroup({ title, path, readOnly, hide = [] }: { title: string; pat
   return (
     <form onSubmit={(e) => { e.preventDefault(); void save(); }} className="space-y-5">
       {err && <Alert tone="danger" onClose={() => setErr(null)}>{err}</Alert>}
-      <Section title={title}>
+      <Wrap bare={bare} title={title}>
         {readOnly && <p className="mb-3 text-xs text-muted">{t('set.readonly_note')}</p>}
         {entries.length === 0 ? <EmptyState icon="settings" title={t('set.empty_group')} /> : (
           <div className="grid gap-3 sm:grid-cols-2">
@@ -284,10 +283,14 @@ function GenericGroup({ title, path, readOnly, hide = [] }: { title: string; pat
             })}
           </div>
         )}
-      </Section>
+      </Wrap>
       {!readOnly && entries.length > 0 && <SaveBar busy={busy} />}
     </form>
   );
+}
+
+function Wrap({ bare, title, children }: { bare?: boolean; title: string; children: React.ReactNode }) {
+  return bare ? <div className="card p-6">{children}</div> : <Section title={title}>{children}</Section>;
 }
 
 const ROLES = ['ADMIN', 'ACCOUNTANT', 'READ_ONLY'] as const;
@@ -310,6 +313,7 @@ function Users() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [pwFor, setPwFor] = useState<Row | null>(null);
+  const [inviteOpen, setInviteOpen] = useState(false);
   const load = () => api.get<Row[]>('/settings/users').then(setRows).catch(() => setRows([]));
   useEffect(() => { void load(); api.get<NonNullable<typeof me>>('/auth/me').then(setMe).catch(() => undefined); }, []);
   const isOwner = me?.role === 'OWNER';
@@ -329,89 +333,103 @@ function Users() {
   }
 
   return (
-    <div className="space-y-5">
+    <div>
+      <div className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <h1 className="text-2xl font-bold tracking-tight">{t('team.page_title')}</h1>
+        {isOwner && <button className="btn-primary" onClick={() => setInviteOpen(true)}><Icon name="plus" />{t('team.invite')}</button>}
+      </div>
       {err && <Alert tone="danger" onClose={() => setErr(null)}>{err}</Alert>}
-      {me && <MyPassword hasPassword={me.hasPassword} onChanged={() => setMe({ ...me, hasPassword: true })} />}
+
+      <div className="mb-4">
+        <h2 className="text-lg font-bold">{t('team.email_title')}</h2>
+        <p className="text-[13px] text-muted">{t('team.email_sub')}</p>
+      </div>
+      <GenericGroup bare title={t('team.email_title')} path="/settings/group/EMAIL_OUTBOUND" />
+
+      <h2 className="mb-4 mt-10 text-lg font-bold">{t('team.members_perms')}</h2>
       <section className="card overflow-hidden">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-5 py-3">
-          <h2 className="section-title">{t('team.members')}</h2>
-          {isOwner && <a href="#invite" className="btn-primary btn-sm"><Icon name="plus" />{t('team.invite')}</a>}
-        </div>
         {!rows ? <Loading /> : (
           <div className="overflow-x-auto">
             <table className="data">
               <thead><tr>
-                <th>{t('team.user')}</th><th>{t('set.user_role')}</th><th className="max-xl:hidden">{t('team.permissions')}</th><th>{t('set.user_status')}</th>
-                <th>{t('set.user_login')}</th><th className="max-sm:hidden">{t('set.user_last_login')}</th>
-                {isOwner && <th><span className="sr-only">{t('set.user_set_pw')}</span></th>}
+                <th>{t('team.user')}</th><th>{t('team.role_email')}</th><th className="max-xl:hidden">{t('team.permissions')}</th><th>{t('set.user_status')}</th>
+                <th className="max-sm:hidden">{t('set.user_last_login')}</th>
+                <th className="text-end">{t('inv.actions')}</th>
               </tr></thead>
               <tbody>{rows.map((r) => (
                 <tr key={r.id}>
                   <td>
-                    <div className="flex items-center gap-2.5">
-                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-soft text-xs font-semibold text-primary-fg">{(r.full_name || r.email).slice(0, 1).toUpperCase()}</span>
+                    <div className="flex items-center gap-3">
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary-soft text-sm font-semibold text-primary-fg">{(r.full_name || r.email).trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase()}</span>
                       <div className="min-w-0">
-                        {r.full_name && <div className="truncate font-medium" dir="auto">{r.full_name}</div>}
-                        <div className="truncate text-xs text-muted" dir="ltr">{r.email}{me?.email === r.email ? ` · ${t('team.you')}` : ''}</div>
+                        <div className="truncate font-semibold" dir="auto">{r.full_name || r.email.split('@')[0]}{me?.email === r.email && <span className="ms-1.5 text-xs font-normal text-muted">({t('team.you')})</span>}</div>
+                        <div className="text-xs italic text-muted">{tx(`role.${r.role}`, r.role)}</div>
                       </div>
                     </div>
                   </td>
                   <td>
-                    {isOwner && r.role !== 'OWNER' ? (
-                      <select className="input h-9 w-auto py-0" aria-label={`${t('set.user_role')}: ${r.email}`} value={r.role} onChange={(e) => void patch(r, 'role', e.target.value)}>
-                        <Options values={ROLES} prefix="role." />
-                      </select>
-                    ) : tx(`role.${r.role}`, r.role)}
+                    <div className="truncate" dir="ltr">{r.email}</div>
+                    <div className={`flex items-center gap-1 text-xs font-medium ${r.has_password ? 'text-primary-fg' : 'text-warning'}`}>
+                      <Icon name={r.has_password ? 'lock' : 'alert'} className="h-3 w-3" />{t(r.has_password ? 'set.user_has_pw' : 'set.user_no_pw')}
+                    </div>
                   </td>
                   <td className="max-xl:hidden">
-                    <div className="flex max-w-[18rem] flex-wrap gap-1">
-                      {(PERMS[r.role] ?? []).map((p) => <span key={p} className="whitespace-nowrap rounded bg-surface-2 px-1.5 py-0.5 text-[11px] text-muted" title={p}>{t(`perm.${p}` as MsgKey)}</span>)}
+                    <div className="flex max-w-[20rem] flex-wrap gap-1">
+                      {(PERMS[r.role] ?? []).map((p) => <span key={p} className={`whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${p === 'ISSUE_INVOICE' ? 'bg-primary-soft text-primary-fg' : 'bg-surface-2 text-muted'}`} title={t(`perm.${p}` as MsgKey)}>{p}</span>)}
                     </div>
                   </td>
                   <td>
                     {isOwner && me?.email !== r.email ? (
-                      <button className={`badge ${r.status === 'ACTIVE' ? 'bg-success-soft text-success' : 'bg-surface-2 text-muted'} hover:ring-1 hover:ring-line-strong`}
+                      <button className={`badge-status ${r.status === 'ACTIVE' ? 'bg-success-soft text-success' : 'bg-warning-soft text-warning'} hover:ring-1 hover:ring-line-strong`}
                         title={r.status === 'ACTIVE' ? t('team.disable') : t('team.enable')}
                         onClick={() => void patch(r, 'status', r.status === 'ACTIVE' ? 'DISABLED' : 'ACTIVE')}>{tx(`ustatus.${r.status}`, r.status)}</button>
-                    ) : <Badge tone={r.status === 'ACTIVE' ? 'success' : 'neutral'}>{tx(`ustatus.${r.status}`, r.status)}</Badge>}
+                    ) : <span className={`badge-status ${r.status === 'ACTIVE' ? 'bg-success-soft text-success' : 'bg-surface-2 text-muted'}`}>{tx(`ustatus.${r.status}`, r.status)}</span>}
                   </td>
-                  <td><Badge tone={r.has_password ? 'success' : 'warning'}>{t(r.has_password ? 'set.user_has_pw' : 'set.user_no_pw')}</Badge></td>
                   <td className="max-sm:hidden text-muted">{r.last_login_at ? date(r.last_login_at) : '—'}</td>
-                  {isOwner && (
-                    <td className="text-end">
-                      <button className="btn-secondary h-9 whitespace-nowrap" onClick={() => setPwFor(r)}><Icon name="lock" />{t('set.user_set_pw')}</button>
-                    </td>
-                  )}
+                  <td className="text-end">
+                    {isOwner && (
+                      <div className="flex items-center justify-end gap-1">
+                        {r.role !== 'OWNER' && (
+                          <select className="input h-8 w-auto bg-surface py-0 text-xs" aria-label={`${t('set.user_role')}: ${r.email}`} value={r.role} onChange={(e) => void patch(r, 'role', e.target.value)}>
+                            <Options values={ROLES} prefix="role." />
+                          </select>
+                        )}
+                        <button className="btn-ghost btn-icon h-8 w-8" title={t('set.user_set_pw')} aria-label={`${t('set.user_set_pw')}: ${r.email}`} onClick={() => setPwFor(r)}><Icon name="pencil" /></button>
+                      </div>
+                    )}
+                  </td>
                 </tr>
               ))}</tbody>
             </table>
           </div>
         )}
       </section>
-      {isOwner && (
-        <div id="invite" className="scroll-mt-24">
-        <Section title={t('set.users_add')}>
-          <form className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 lg:items-end" onSubmit={(e) => { e.preventDefault(); void add(); }}>
-            <Field label={t('set.user_email')} htmlFor="u-e"><input id="u-e" type="email" required className="input" dir="ltr" autoComplete="off" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
-            <Field label={t('set.user_name')} htmlFor="u-n"><input id="u-n" className="input" dir="auto" value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} /></Field>
-            <Field label={t('set.user_role')} htmlFor="u-r"><select id="u-r" className="input" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}><Options values={ROLES} prefix="role." /></select></Field>
-            <Field label={t('set.user_password')} htmlFor="u-p">
-              <PasswordInput id="u-p" value={form.password} onChange={(v) => setForm({ ...form, password: v })} autoComplete="new-password" minLength={10} />
-            </Field>
-            <p className="text-xs text-muted sm:col-span-2 lg:col-span-3">{t('set.pw_hint')}</p>
-            <button className="btn-primary justify-center" disabled={busy}>{busy ? <Spinner /> : <Icon name="plus" />}{t('set.users_add')}</button>
-          </form>
-        </Section>
+
+      <section className="mt-8 flex gap-4 rounded-xl border border-primary/20 bg-primary-soft/60 p-6">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface text-primary-fg shadow-sm"><Icon name="shield" className="h-5 w-5" /></span>
+        <div>
+          <h2 className="font-semibold text-primary-fg">{t('team.logic_title')}</h2>
+          <ul className="mt-1 space-y-1 text-[13px] leading-relaxed text-primary-fg/85">
+            <li>{t('team.logic_1')}</li>
+            <li>{t('team.logic_2')}</li>
+            <li>{t('team.logic_3')}</li>
+          </ul>
         </div>
-      )}
-      <section className="card card-pad">
-        <h2 className="section-title mb-2 flex items-center gap-2"><Icon name="info" className="h-4 w-4 text-muted" />{t('team.logic_title')}</h2>
-        <ul className="list-disc space-y-1 ps-5 text-sm text-muted">
-          <li>{t('team.logic_1')}</li>
-          <li>{t('team.logic_2')}</li>
-          <li>{t('team.logic_3')}</li>
-        </ul>
       </section>
+
+      {me && <div className="mt-8"><MyPassword hasPassword={me.hasPassword} onChanged={() => setMe({ ...me, hasPassword: true })} /></div>}
+
+      <Modal open={inviteOpen} onClose={() => setInviteOpen(false)} title={t('set.users_add')}>
+        <form className="grid gap-4" onSubmit={(e) => { e.preventDefault(); void add().then(() => setInviteOpen(false)); }}>
+          <Field label={t('set.user_email')} htmlFor="u-e"><input id="u-e" type="email" required className="input" dir="ltr" autoComplete="off" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
+          <Field label={t('set.user_name')} htmlFor="u-n"><input id="u-n" className="input" dir="auto" value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} /></Field>
+          <Field label={t('set.user_role')} htmlFor="u-r"><select id="u-r" className="input" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}><Options values={ROLES} prefix="role." /></select></Field>
+          <Field label={t('set.user_password')} htmlFor="u-p" hint={t('set.pw_hint')}>
+            <PasswordInput id="u-p" value={form.password} onChange={(v) => setForm({ ...form, password: v })} autoComplete="new-password" minLength={10} />
+          </Field>
+          <button className="btn-primary justify-center" disabled={busy}>{busy ? <Spinner /> : <Icon name="plus" />}{t('set.users_add')}</button>
+        </form>
+      </Modal>
       {pwFor && <SetUserPassword row={pwFor} onClose={() => setPwFor(null)} onSaved={() => { setPwFor(null); toast(t('set.pw_set')); void load(); }} />}
     </div>
   );

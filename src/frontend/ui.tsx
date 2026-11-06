@@ -1,5 +1,6 @@
 /** Shared UI kit: icons, layout primitives, feedback, theme. */
 import { createContext, useCallback, useContext, useEffect, useId, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 import { useI18n } from './i18n';
 import type { MsgKey } from './i18n';
@@ -39,6 +40,14 @@ const ICONS: Record<string, ReactNode> = {
   logOut: <><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></>,
   bookmark: <path d="M19 21l-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z" />,
   chevronDown: <path d="m6 9 6 6 6-6" />,
+  arrowLeft: <><path d="m12 19-7-7 7-7" /><path d="M19 12H5" /></>,
+  star: <path d="M12 2l3.1 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.8 21l1.2-6.8-5-4.9 6.9-1z" />,
+  more: <><circle cx="12" cy="5" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="12" cy="19" r="1" /></>,
+  shield: <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />,
+  sliders: <><path d="M4 21v-7" /><path d="M4 10V3" /><path d="M12 21v-9" /><path d="M12 8V3" /><path d="M20 21v-5" /><path d="M20 12V3" /><path d="M1 14h6" /><path d="M9 8h6" /><path d="M17 16h6" /></>,
+  zoomIn: <><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /><path d="M11 8v6" /><path d="M8 11h6" /></>,
+  zoomOut: <><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /><path d="M8 11h6" /></>,
+  mail: <><rect x="2" y="4" width="20" height="16" rx="2" /><path d="m22 7-10 6L2 7" /></>,
   chevronRight: <path d="m9 18 6-6-6-6" />,
   user: <><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></>,
   building: <><rect x="4" y="2" width="16" height="20" rx="2" /><path d="M9 22v-4h6v4" /><path d="M8 6h.01" /><path d="M16 6h.01" /><path d="M12 6h.01" /><path d="M12 10h.01" /><path d="M12 14h.01" /><path d="M16 10h.01" /><path d="M16 14h.01" /><path d="M8 10h.01" /><path d="M8 14h.01" /></>,
@@ -63,10 +72,39 @@ export function Icon({ name, className = 'h-4 w-4', flip }: { name: IconName; cl
 
 export function Logo({ className = 'h-8 w-8' }: { className?: string }) {
   return (
-    <svg viewBox="0 0 32 32" className={className} aria-hidden="true">
+    <svg viewBox="0 0 32 32" className={`${className} shrink-0`} aria-hidden="true">
       <rect width="32" height="32" rx="8" fill="rgb(var(--primary))" />
-      <path d="M10 9l12 14M22 9L10 23" stroke="white" strokeWidth="3" strokeLinecap="round" />
+      <path d="M12 8.5h6l4 4v10a1.5 1.5 0 0 1-1.5 1.5h-8.5A1.5 1.5 0 0 1 10.5 22.5v-12.5A1.5 1.5 0 0 1 12 8.5Z" fill="none" stroke="white" strokeWidth="1.8" strokeLinejoin="round" />
+      <path d="M13.5 15.5h5M13.5 18.5h5" stroke="white" strokeWidth="1.8" strokeLinecap="round" />
     </svg>
+  );
+}
+
+/* --------------------------------------------------------------- top bar */
+/** Pages with a design-specific header (back arrow, title, actions) render it into the shell's header slot. */
+export const TopBarCtx = createContext<{ el: HTMLElement | null; mount: () => () => void }>({ el: null, mount: () => () => {} });
+
+export function TopBar({ title, subtitle, back, actions }: { title: ReactNode; subtitle?: ReactNode; back?: string; actions?: ReactNode }) {
+  const { el, mount } = useContext(TopBarCtx);
+  const { t } = useI18n();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => mount(), []);
+  if (!el) return null;
+  return createPortal(
+    <div className="flex min-w-0 flex-1 items-center gap-3">
+      {back && (
+        <a href={back} onClick={(e) => { e.preventDefault(); window.history.length > 1 ? window.history.back() : window.location.assign(back); }}
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted hover:bg-surface-2 hover:text-fg" aria-label={t('common.back')}>
+          <Icon name="arrowLeft" className="h-5 w-5" flip />
+        </a>
+      )}
+      <div className="min-w-0 flex-1">
+        <h1 className="truncate text-lg font-bold leading-tight">{title}</h1>
+        {subtitle && <p className="truncate text-xs text-muted">{subtitle}</p>}
+      </div>
+      {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
+    </div>,
+    el,
   );
 }
 
@@ -173,7 +211,7 @@ const STATUS_TONE: Record<string, string> = {
 };
 export function StatusBadge({ status }: { status: string }) {
   const { tx } = useI18n();
-  return <span className={`badge ${STATUS_TONE[status] ?? 'bg-surface-2 text-muted'}`}>{tx(`status.${status}`, status)}</span>;
+  return <span className={`badge-status ${STATUS_TONE[status] ?? 'bg-surface-2 text-muted'}`}>{tx(`status.${status}`, status)}</span>;
 }
 
 export function Badge({ tone = 'neutral', children }: { tone?: Tone | 'neutral'; children: ReactNode }) {

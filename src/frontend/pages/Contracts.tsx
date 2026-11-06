@@ -8,7 +8,7 @@ import {
   customVariables, parseFields, standardVariables, STANDARD_VARS, substitute,
 } from '../../lib/contract-doc';
 import { formatDateFor } from '../../lib/format';
-import { Alert, Badge, EmptyState, Field, Icon, Loading, Modal, PageHeader, Section, Spinner, StatusBadge, useToast } from '../ui';
+import { Alert, Badge, EmptyState, Field, Icon, Loading, Modal, PageHeader, Section, Spinner, StatusBadge, TopBar, useToast } from '../ui';
 import type { IconName } from '../ui';
 import { CustomerCombobox, customerName } from '../components/CustomerSearch';
 import { ContractDoc } from '../components/ContractDoc';
@@ -70,76 +70,89 @@ function ContractList() {
   const expiring = (rows ?? []).filter((r) => (r.status === 'SENT' || r.status === 'VIEWED') && r.sign_token_expires_at && new Date(r.sign_token_expires_at).getTime() < soon).length;
   const nextSigner = (r: Row) => r.status === 'SENT' || r.status === 'VIEWED' ? 'customer' : r.status === 'CUSTOMER_SIGNED' ? 'you' : r.status === 'DRAFT' ? 'draft' : null;
 
+  const initials = (n: string) => n.trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase() || '?';
+
   return (
     <div>
-      <PageHeader title={t('ctr.title')} subtitle={t('ctr.subtitle')}
-        actions={<>
+      <div className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">{t('ctr.title')}</h1>
+          <p className="mt-1 text-sm text-muted">{t('ctr.subtitle')}</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
           <Link className="btn-secondary" to="/contracts/templates"><Icon name="bookmark" />{t('ctr.templates')}</Link>
           <Link className="btn-primary" to="/contracts/new"><Icon name="plus" />{t('ctr.new')}</Link>
-        </>} />
-      <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Kpi icon="send" label={t('ctr.kpi_awaiting')} value={num(pending)} sub={t('ctr.kpi_awaiting_sub')} onClick={() => setFilter('PENDING')} />
-        <Kpi icon="pen" label={t('ctr.kpi_your_turn')} value={num(yourTurn)} sub={t('ctr.kpi_your_turn_sub')} tone={yourTurn ? 'warning' : undefined} onClick={() => setFilter('CUSTOMER_SIGNED')} />
-        <Kpi icon="fileSign" label={t('ctr.kpi_completed')} value={num(completed)} sub={t('ctr.kpi_completed_sub')} tone="success" onClick={() => setFilter('SIGNED')} />
-        <Kpi icon="clock" label={t('ctr.kpi_expiring')} value={num(expiring)} sub={t('ctr.kpi_expiring_sub')} tone={expiring ? 'danger' : undefined} onClick={() => setFilter('PENDING')} />
-      </div>
-      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
-        <div className="relative sm:w-72">
-          <Icon name="search" className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
-          <input className="input ps-9" placeholder={t('ctr.search')} aria-label={t('ctr.search')} value={q} onChange={(e) => setQ(e.target.value)} />
-        </div>
-        <div className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1" role="tablist">
-          {FILTERS.map((f) => (
-            <button key={f} role="tab" aria-selected={filter === f} onClick={() => setFilter(f)}
-              className={`h-9 whitespace-nowrap rounded-full px-3.5 text-sm font-medium transition-colors ${filter === f ? 'bg-primary text-on-primary' : 'bg-surface text-muted ring-1 ring-line hover:text-fg'}`}>
-              {f === 'ALL' ? t('common.all') : f === 'PENDING' ? `${t('ctr.awaiting')}${pending ? ` · ${num(pending)}` : ''}`
-                : f === 'CUSTOMER_SIGNED' ? `${t('ctr.your_turn')}${yourTurn ? ` · ${num(yourTurn)}` : ''}` : tx(`status.${f}`, f)}
-            </button>
-          ))}
         </div>
       </div>
+      <div className="mb-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <Kpi label={t('ctr.kpi_awaiting')} value={num(pending)} sub={t('ctr.kpi_awaiting_sub')} subTone="primary" onClick={() => setFilter('PENDING')} />
+        <Kpi label={t('ctr.kpi_your_turn')} value={num(yourTurn)} sub={t('ctr.kpi_your_turn_sub')} subTone="warning" accent={yourTurn > 0} onClick={() => setFilter('CUSTOMER_SIGNED')} />
+        <Kpi label={t('ctr.kpi_completed')} value={num(completed)} sub={t('ctr.kpi_completed_sub')} subTone="success" onClick={() => setFilter('SIGNED')} />
+        <Kpi label={t('ctr.kpi_expiring')} value={num(expiring)} sub={t('ctr.kpi_expiring_sub')} subTone="danger" onClick={() => setFilter('PENDING')} />
+      </div>
+
       <div className="card overflow-hidden">
+        <div className="flex flex-col gap-3 border-b border-line px-6 pt-4 sm:flex-row sm:items-end sm:justify-between">
+          <div className="-mb-px flex gap-5 overflow-x-auto" role="tablist">
+            {FILTERS.map((f) => (
+              <button key={f} role="tab" aria-selected={filter === f} onClick={() => setFilter(f)}
+                className={`whitespace-nowrap border-b-2 pb-3 text-sm font-medium transition-colors ${filter === f ? 'border-primary text-primary-fg' : 'border-transparent text-muted hover:text-fg'}`}>
+                {f === 'ALL' ? t('common.all') : f === 'PENDING' ? `${t('ctr.awaiting')}${pending ? ` · ${num(pending)}` : ''}`
+                  : f === 'CUSTOMER_SIGNED' ? `${t('ctr.your_turn')}${yourTurn ? ` · ${num(yourTurn)}` : ''}` : tx(`status.${f}`, f)}
+              </button>
+            ))}
+          </div>
+          <div className="relative mb-3 sm:w-64">
+            <Icon name="search" className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+            <input className="input h-9 ps-9" placeholder={t('ctr.search')} aria-label={t('ctr.search')} value={q} onChange={(e) => setQ(e.target.value)} />
+          </div>
+        </div>
         {!rows ? <Loading /> : shown.length === 0 ? (
           <EmptyState icon="fileSign" title={t('ctr.empty')} action={<Link className="btn-primary" to="/contracts/new"><Icon name="plus" />{t('ctr.new')}</Link>} />
         ) : (
           <div className="overflow-x-auto">
             <table className="data">
-              <thead><tr><th>{t('ctr.number')}</th><th>{t('ctr.f_title')}</th><th>{t('ctr.customer')}</th><th className="max-sm:hidden">{t('ctr.updated')}</th><th>{t('ctr.status')}</th><th className="max-md:hidden">{t('ctr.next_signer')}</th><th><span className="sr-only">{t('inv.actions')}</span></th></tr></thead>
-              <tbody>{shown.map((r) => (
-                <tr key={r.id} className="row-link" onClick={() => nav(`/contracts/${r.id}`)}>
-                  <td><Link to={`/contracts/${r.id}`} className="font-mono text-[13px] font-medium text-primary-fg hover:underline" dir="ltr" onClick={(e) => e.stopPropagation()}>{r.contract_number}</Link></td>
-                  <td className="max-w-[18rem]"><div className="truncate" dir="auto">{r.title}</div><div className="text-xs text-muted">{t(`lang.${r.language}` as MsgKey)}</div></td>
-                  <td className="max-w-[14rem]"><div className="truncate" dir="auto">{r.customer_company || r.customer_person || '—'}</div>{r.sent_to_email && <div className="truncate text-xs text-muted" dir="ltr">{r.sent_to_email}</div>}</td>
-                  <td className="whitespace-nowrap text-muted max-sm:hidden">{date(r.signed_at ?? r.sent_at ?? r.updated_at)}</td>
-                  <td><StatusBadge status={r.status} /></td>
-                  <td className="max-md:hidden">
-                    {nextSigner(r) === 'customer' && <span className="flex items-center gap-1.5 text-sm"><span className="flex h-6 w-6 items-center justify-center rounded-full bg-surface-2 text-[11px] font-semibold text-muted">{(r.customer_company || r.customer_person || '?').slice(0, 1).toUpperCase()}</span>{t('ctr.signer_customer')}</span>}
-                    {nextSigner(r) === 'you' && <span className="flex items-center gap-1.5 text-sm font-medium text-warning"><Icon name="pen" className="h-4 w-4" />{t('ctr.signer_you')}</span>}
-                    {nextSigner(r) === null && <span className="text-muted">—</span>}
-                    {nextSigner(r) === 'draft' && <span className="text-xs text-muted">{t('ctr.signer_draft')}</span>}
-                  </td>
-                  <td className="whitespace-nowrap text-end" onClick={(e) => e.stopPropagation()}>
-                    {r.status === 'CUSTOMER_SIGNED' ? <Link to={`/contracts/${r.id}`} className="btn-primary btn-sm"><Icon name="pen" />{t('ctr.sign_now')}</Link>
-                      : r.status === 'SIGNED' ? <a className="btn-ghost btn-sm btn-icon w-8" href={`/api/contracts/${r.id}/pdf`} title={t('ctr.pdf')} aria-label={`${t('ctr.pdf')} ${r.contract_number}`}><Icon name="download" /></a>
-                        : <Link to={`/contracts/${r.id}`} className="btn-ghost btn-sm">{r.status === 'DRAFT' ? t('ctr.edit') : t('ctr.open')}</Link>}
-                  </td>
-                </tr>
-              ))}</tbody>
+              <thead><tr><th>{t('ctr.name_ref')}</th><th>{t('ctr.customer')}</th><th>{t('ctr.status')}</th><th className="max-md:hidden">{t('ctr.next_signer')}</th><th className="text-end">{t('inv.actions')}</th></tr></thead>
+              <tbody>{shown.map((r) => {
+                const cust = r.customer_company || r.customer_person || '';
+                return (
+                  <tr key={r.id} className="row-link" onClick={() => nav(`/contracts/${r.id}`)}>
+                    <td className="max-w-[20rem]">
+                      <Link to={`/contracts/${r.id}`} className="block truncate font-semibold hover:text-primary-fg" onClick={(e) => e.stopPropagation()}><bdi>{r.title}</bdi></Link>
+                      <div className="font-mono text-xs text-muted" dir="ltr">{r.contract_number} · {date(r.signed_at ?? r.sent_at ?? r.updated_at)}</div>
+                    </td>
+                    <td className="max-w-[16rem]"><div className="truncate font-medium"><bdi>{cust || '—'}</bdi></div>{r.sent_to_email && <div className="truncate text-xs text-muted" dir="ltr">{r.sent_to_email}</div>}</td>
+                    <td><StatusBadge status={r.status} /></td>
+                    <td className="max-md:hidden">
+                      {nextSigner(r) === 'customer' && <span className="flex items-center gap-2 text-sm"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-info-soft text-[11px] font-bold text-info">{initials(cust)}</span><bdi className="max-w-[8rem] truncate">{cust || t('ctr.signer_customer')}</bdi></span>}
+                      {nextSigner(r) === 'you' && <span className="flex items-center gap-2 text-sm font-medium"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-warning-soft text-warning"><Icon name="pen" className="h-4 w-4" /></span>{t('ctr.signer_you')}</span>}
+                      {nextSigner(r) === null && <span className="flex items-center gap-2 text-sm text-success"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-success-soft"><Icon name="check" className="h-4 w-4" /></span>{t('ctr.signer_done')}</span>}
+                      {nextSigner(r) === 'draft' && <span className="text-xs text-muted">{t('ctr.signer_draft')}</span>}
+                    </td>
+                    <td className="whitespace-nowrap text-end" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center justify-end gap-2">
+                        {r.status === 'CUSTOMER_SIGNED' ? <Link to={`/contracts/${r.id}`} className="btn-primary btn-sm">{t('ctr.sign_now')}</Link>
+                          : <Link to={`/contracts/${r.id}`} className="btn-secondary btn-sm">{r.status === 'DRAFT' ? t('ctr.edit') : r.status === 'SENT' || r.status === 'VIEWED' ? t('ctr.manage_link') : t('ctr.open')}</Link>}
+                        {r.status === 'SIGNED' && <a className="btn-ghost btn-icon h-8 w-8" href={`/api/contracts/${r.id}/pdf`} title={t('ctr.pdf')} aria-label={`${t('ctr.pdf')} ${r.contract_number}`}><Icon name="download" /></a>}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}</tbody>
             </table>
           </div>
         )}
       </div>
 
-      <section className="card card-pad mt-6">
-        <h2 className="section-title mb-4">{t('ctr.flow_title')}</h2>
-        <ol className="grid gap-4 sm:grid-cols-3">
+      <section className="card mt-8 p-6">
+        <h2 className="mb-6 text-lg font-semibold">{t('ctr.flow_title')}</h2>
+        <ol className="grid gap-6 sm:grid-cols-3">
           {([['send', 'flow1'], ['pen', 'flow2'], ['fileSign', 'flow3']] as const).map(([icon, k], i) => (
-            <li key={k} className="flex gap-3">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary-soft text-primary-fg"><Icon name={icon} className="h-[18px] w-[18px]" /></span>
-              <div>
-                <div className="text-sm font-semibold">{num(i + 1)}. {t(`ctr.${k}_title` as MsgKey)}</div>
-                <p className="mt-0.5 text-sm text-muted">{t(`ctr.${k}_text` as MsgKey)}</p>
-              </div>
+            <li key={k} className="relative flex flex-col items-center text-center">
+              {i < 2 && <span className="absolute start-[calc(50%+2rem)] top-6 hidden h-0.5 w-[calc(100%-4rem)] bg-line sm:block" aria-hidden="true" />}
+              <span className="relative flex h-12 w-12 items-center justify-center rounded-full bg-primary-soft text-primary-fg ring-4 ring-surface"><Icon name={icon} className="h-5 w-5" /></span>
+              <div className="mt-3 text-sm font-semibold">{num(i + 1)}. {t(`ctr.${k}_title` as MsgKey)}</div>
+              <p className="mt-1 max-w-xs text-[13px] text-muted">{t(`ctr.${k}_text` as MsgKey)}</p>
             </li>
           ))}
         </ol>
@@ -169,16 +182,13 @@ function Stepper({ steps, done }: { steps: string[]; done: boolean[] }) {
   );
 }
 
-function Kpi({ icon, label, value, sub, tone, onClick }: { icon: IconName; label: string; value: string; sub: string; tone?: 'success' | 'warning' | 'danger'; onClick: () => void }) {
-  const iconBg = tone === 'success' ? 'bg-success-soft text-success' : tone === 'warning' ? 'bg-warning-soft text-warning' : tone === 'danger' ? 'bg-danger-soft text-danger' : 'bg-primary-soft text-primary-fg';
+function Kpi({ label, value, sub, subTone, accent, onClick }: { label: string; value: string; sub: string; subTone: 'primary' | 'success' | 'warning' | 'danger'; accent?: boolean; onClick: () => void }) {
+  const subCls = subTone === 'primary' ? 'text-primary-fg' : subTone === 'success' ? 'text-success' : subTone === 'warning' ? 'text-warning' : 'text-danger';
   return (
-    <button onClick={onClick} className="card card-pad flex flex-col gap-2 text-start transition-colors hover:border-line-strong">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[13px] text-muted">{label}</span>
-        <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${iconBg}`}><Icon name={icon} className="h-4 w-4" /></span>
-      </div>
-      <div className="tabular text-2xl font-bold">{value}</div>
-      <div className="text-xs text-muted">{sub}</div>
+    <button onClick={onClick} className={`card flex flex-col p-5 text-start transition-colors hover:border-line-strong ${accent ? 'border-s-4 border-s-warning' : ''}`}>
+      <span className="eyebrow">{label}</span>
+      <span className="tabular mt-2 text-3xl font-bold">{value}</span>
+      <span className={`mt-2 text-xs font-medium ${subCls}`}>{sub}</span>
     </button>
   );
 }
@@ -209,6 +219,7 @@ function ContractEditor({ existing }: { existing?: Contract }) {
   const [body, setBody] = useState(existing?.body ?? '');
   const [vars, setVars] = useState<Record<string, string>>(existing?.variables ?? {});
   const [tab, setTab] = useState<'edit' | 'preview'>('edit');
+  const [step, setStep] = useState(0);
   const [busy, setBusy] = useState<null | 'save' | 'delete'>(null);
   const [err, setErr] = useState<string | null>(null);
   const [sendOpen, setSendOpen] = useState(false);
@@ -276,113 +287,169 @@ function ContractEditor({ existing }: { existing?: Contract }) {
   }
 
   const rtl = language === 'fa';
+  const steps = [t('ctr.step_setup'), t('ctr.step_content'), t('ctr.step_send')];
+  const preview = (
+    <div className="flex-1 overflow-y-auto bg-surface-2 p-4 sm:p-8">
+      <article className="mx-auto max-w-2xl rounded bg-surface p-8 shadow-sm ring-1 ring-line sm:p-12" dir={rtl ? 'rtl' : 'ltr'} lang={language}>
+        <ContractDoc body={substitute(body, allVars)} mode="preview" vars={allVars} formatDate={(iso) => formatDateFor(iso, language)} />
+      </article>
+    </div>
+  );
+
+  const editorPane = (
+    <section className="card flex min-h-[32rem] flex-col overflow-hidden">
+      <div className="flex items-center justify-between gap-2 border-b border-line px-4 py-2">
+        <div className="flex gap-1 rounded-lg bg-surface-2 p-1" role="tablist">
+          {(['edit', 'preview'] as const).map((m) => (
+            <button key={m} role="tab" aria-selected={tab === m} onClick={() => setTab(m)}
+              className={`h-8 rounded-md px-3 text-[13px] font-semibold ${tab === m ? 'bg-surface text-fg shadow-sm' : 'text-muted hover:text-fg'}`}>
+              {t(m === 'edit' ? 'ctr.edit' : 'ctr.preview')}
+            </button>
+          ))}
+        </div>
+        {tab === 'edit' && <InsertMenu onInsert={insert} rtl={rtl} />}
+      </div>
+      {tab === 'edit' ? (
+        <div className="flex flex-1 flex-col p-4">
+          <label htmlFor="c-body" className="sr-only">{t('ctr.body')}</label>
+          <textarea id="c-body" ref={area} className="input min-h-[28rem] flex-1 resize-y bg-surface font-mono text-[13px] leading-6" dir={rtl ? 'rtl' : 'ltr'}
+            value={body} onChange={(e) => setBody(e.target.value)} spellCheck={false} />
+          <p className="mt-2 text-xs text-muted" dir="auto">{t('ctr.body_help')}</p>
+        </div>
+      ) : preview}
+    </section>
+  );
   return (
-    <div>
-      <PageHeader title={existing ? `${existing.contract_number}` : t('ctr.new')} subtitle={t('ctr.subtitle')}
-        actions={<Link to="/contracts" className="btn-ghost"><Icon name="chevronRight" flip />{t('ctr.back')}</Link>} />
-      {err && <div className="mb-4" role="alert"><Alert tone="danger" onClose={() => setErr(null)}>{err}</Alert></div>}
+    <div className="-mx-4 -my-6 sm:-mx-8 sm:-my-8">
+      <TopBar back="/contracts" title={existing ? `${t('ctr.workflow_title')} · ${existing.contract_number}` : t('ctr.workflow_title')}
+        actions={<>
+          <button className="btn-secondary" onClick={() => void save()} disabled={!!busy}>{busy === 'save' ? <Spinner /> : <Icon name="save" className="sm:hidden" />}<span className="max-sm:hidden">{t('ctr.save')}</span></button>
+          <button className="btn-primary" onClick={() => void openSend()} disabled={!!busy || !body.trim()}><span className="max-sm:hidden">{t('ctr.send')}</span><Icon name="send" flip /></button>
+        </>} />
+      <div className="sticky top-16 z-20 border-b border-line bg-surface px-4 sm:px-8">
+        <div className="-mb-px flex gap-8 overflow-x-auto" role="tablist">
+          {steps.map((s2, i) => (
+            <button key={s2} role="tab" aria-selected={step === i} onClick={() => setStep(i)}
+              className={`whitespace-nowrap border-b-2 py-3.5 text-sm font-medium transition-colors ${step === i ? 'border-primary font-semibold text-primary-fg' : 'border-transparent text-muted hover:text-fg'}`}>
+              {i18n.num(i + 1)}. {s2}
+            </button>
+          ))}
+        </div>
+      </div>
 
-      <Stepper steps={[t('ctr.step_setup'), t('ctr.step_content'), t('ctr.step_send')]}
-        done={[!!title.trim() && !!customer, !!body.trim() && custom.every((k) => vars[k]?.trim()), false]} />
+      <div className={`mx-auto space-y-8 px-4 py-8 sm:px-8 ${step === 1 ? 'max-w-6xl' : 'max-w-4xl'}`}>
+        {err && <div role="alert"><Alert tone="danger" onClose={() => setErr(null)}>{err}</Alert></div>}
 
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
-        <div className="space-y-5">
-          <Section title={t('ctr.f_title')} icon="fileSign">
-            <div className="grid gap-3 sm:grid-cols-2">
+        {step === 0 && <>
+          <StepCard n={1} title={t('ctr.basic_details')}>
+            <div className="grid gap-5 sm:grid-cols-2">
               <Field label={t('ctr.f_title')} htmlFor="c-title" className="sm:col-span-2">
-                <input id="c-title" className="input" dir="auto" value={title} onChange={(e) => setTitle(e.target.value)} />
+                <input id="c-title" className="input h-11" dir="auto" placeholder={t('ctr.title_ph')} value={title} onChange={(e) => setTitle(e.target.value)} />
               </Field>
-              {langs.length > 1 && (
+              <Field label={t('ctr.internal_ref')} htmlFor="c-ref">
+                <input id="c-ref" className="input h-11 font-mono text-muted" dir="ltr" readOnly value={number || 'CTR-XXXX'} />
+              </Field>
+              {langs.length > 1 ? (
                 <Field label={t('ctr.f_language')} htmlFor="c-lang">
-                  <select id="c-lang" className="input" value={language} onChange={(e) => { setLanguage(e.target.value as CLang); setTemplateId(null); }}>
+                  <select id="c-lang" className="input h-11" value={language} onChange={(e) => { setLanguage(e.target.value as CLang); setTemplateId(null); }}>
                     {langs.map((l) => <option key={l} value={l}>{t(`lang.${l}` as MsgKey)}</option>)}
                   </select>
                 </Field>
-              )}
-              <Field label={t('ctr.f_template')} htmlFor="c-tpl" className={langs.length > 1 ? '' : 'sm:col-span-2'}>
-                <select id="c-tpl" className="input" value={templateId ?? ''} onChange={(e) => pickTemplate(e.target.value)}>
+              ) : <div />}
+              <Field label={t('ctr.f_template')} htmlFor="c-tpl" className="sm:col-span-2">
+                <select id="c-tpl" className="input h-11" value={templateId ?? ''} onChange={(e) => pickTemplate(e.target.value)}>
                   <option value="">{t('ctr.no_template')}</option>
                   {langTemplates.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
                 </select>
               </Field>
             </div>
-          </Section>
+          </StepCard>
 
-          <Section title={t('ctr.f_customer')} icon="user">
-            {customer ? (
-              <div className="flex items-center justify-between gap-3 rounded-lg border border-line px-3 py-2.5">
-                <div className="min-w-0">
-                  <div className="truncate font-medium" dir="auto">{customerName(customer as unknown as Cust)}</div>
+          <StepCard n={2} title={t('ctr.recipient')}>
+            <div className="label">{t('ni.select_customer')}</div>
+            {!customer && <CustomerCombobox onSelect={(h) => {
+              api.get<{ customer: Record<string, unknown> }>(`/customers/${h.id}`).then((d) => setCustomer(d.customer)).catch(() => setCustomer(h as unknown as Record<string, unknown>));
+            }} />}
+            <div className={`flex items-center gap-4 rounded-lg border border-line bg-surface-2 p-4 ${customer ? '' : 'mt-4'}`}>
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface text-muted shadow-sm"><Icon name="user" className="h-5 w-5" /></span>
+              {customer ? (
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-semibold"><bdi>{customerName(customer as unknown as Cust)}</bdi></div>
                   <div className="truncate text-xs text-muted" dir="ltr">{String(customer.email ?? '')}</div>
                 </div>
-                <button className="btn-ghost h-9" onClick={() => setCustomer(null)}>{t('ctr.change')}</button>
-              </div>
-            ) : (
-              <CustomerCombobox onSelect={(h) => {
-                api.get<{ customer: Record<string, unknown> }>(`/customers/${h.id}`).then((d) => setCustomer(d.customer)).catch(() => setCustomer(h as unknown as Record<string, unknown>));
-              }} />
-            )}
-          </Section>
+              ) : (
+                <div className="min-w-0 flex-1">
+                  <div className="font-semibold">{t('ctr.no_customer')}</div>
+                  <div className="text-xs text-muted">{t('ctr.no_customer_hint')}</div>
+                </div>
+              )}
+              {customer ? <button className="btn-ghost btn-sm text-primary-fg" onClick={() => setCustomer(null)}>{t('ctr.change')}</button>
+                : <Link to="/customers" className="text-xs font-semibold text-primary-fg hover:underline">+ {t('ctr.new_customer')}</Link>}
+            </div>
+          </StepCard>
 
-          <Section title={t('ctr.workflow')} icon="send">
-            <div className="flex gap-3 rounded-lg border-2 border-primary bg-primary-soft/40 p-3">
-              <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary text-on-primary"><Icon name="check" className="h-3 w-3" /></span>
-              <div>
-                <div className="text-sm font-semibold">{t('ctr.customer_first')}</div>
-                <p className="mt-0.5 text-xs text-muted">{t('ctr.customer_first_text')}</p>
+          <StepCard n={3} title={t('ctr.workflow')} badge={<span className="badge-status bg-success-soft text-success">{t('ctr.ecosystem_mode')}</span>}>
+            <div className="space-y-3">
+              <div className="flex items-center gap-4 rounded-xl border-2 border-primary/30 bg-primary-soft/50 p-4">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary-soft text-lg font-semibold text-primary-fg">{i18n.num(1)}</span>
+                <div className="min-w-0 flex-1">
+                  <div className="font-semibold text-primary-fg">{t('ctr.customer_first')}</div>
+                  <p className="mt-0.5 text-xs text-primary-fg/80">{t('ctr.customer_first_text')}</p>
+                </div>
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-on-primary"><Icon name="check" className="h-3.5 w-3.5" /></span>
+              </div>
+              <div className="flex items-center gap-4 rounded-xl border border-line p-4 opacity-50" aria-disabled="true">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface-2 text-lg font-semibold text-muted">{i18n.num(2)}</span>
+                <div>
+                  <div className="font-semibold text-muted">{t('ctr.owner_first')}</div>
+                  <p className="mt-0.5 text-xs text-muted">{t('ctr.owner_first_text')}</p>
+                </div>
               </div>
             </div>
-          </Section>
+          </StepCard>
+        </>}
 
-          <Section title={t('ctr.vars')} icon="pencil">
-            <p className="mb-3 text-xs text-muted">{t('ctr.vars_hint')}</p>
-            {custom.length === 0 ? <p className="text-sm text-muted">{t('ctr.vars_none')}</p> : (
-              <div className="grid gap-3 sm:grid-cols-2">
-                {custom.map((k) => (
-                  <Field key={k} label={k.replace(/_/g, ' ')} htmlFor={`v-${k}`}>
-                    <input id={`v-${k}`} className={`input ${!vars[k]?.trim() ? 'border-warning' : ''}`} dir="auto" value={vars[k] ?? ''} onChange={(e) => setVars({ ...vars, [k]: e.target.value })} />
-                  </Field>
-                ))}
-              </div>
-            )}
-            {fieldCount > 0 && <p className="mt-3 text-xs text-muted"><Icon name="pen" className="me-1 inline h-3.5 w-3.5" />{t('ctr.fields_count', { n: i18n.num(fieldCount) })}</p>}
-          </Section>
-        </div>
-
-        <section className="card flex min-h-[32rem] flex-col overflow-hidden">
-          <div className="flex items-center justify-between gap-2 border-b border-line px-4 py-2">
-            <div className="inline-flex rounded-lg border border-line p-0.5" role="tablist">
-              {(['edit', 'preview'] as const).map((m) => (
-                <button key={m} role="tab" aria-selected={tab === m} onClick={() => setTab(m)}
-                  className={`h-9 rounded-md px-3 text-sm font-medium ${tab === m ? 'bg-primary text-on-primary' : 'text-muted hover:text-fg'}`}>
-                  {t(m === 'edit' ? 'ctr.edit' : 'ctr.preview')}
-                </button>
-              ))}
-            </div>
-            {tab === 'edit' && <InsertMenu onInsert={insert} rtl={rtl} />}
+        {step === 1 && (
+          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)]">
+            <section className="card p-6">
+              <h2 className="mb-1 text-base font-bold">{t('ctr.vars')}</h2>
+              <p className="mb-5 text-xs text-muted">{t('ctr.vars_hint')}</p>
+              {custom.length === 0 ? <p className="text-sm text-muted">{t('ctr.vars_none')}</p> : (
+                <div className="space-y-4">
+                  {custom.map((k) => (
+                    <Field key={k} label={k.replace(/_/g, ' ')} htmlFor={`v-${k}`}>
+                      <input id={`v-${k}`} className={`input ${!vars[k]?.trim() ? 'border-warning' : ''}`} dir="auto" value={vars[k] ?? ''} onChange={(e) => setVars({ ...vars, [k]: e.target.value })} />
+                    </Field>
+                  ))}
+                </div>
+              )}
+              {fieldCount > 0 && <p className="mt-4 text-xs text-muted"><Icon name="pen" className="me-1 inline h-3.5 w-3.5" />{t('ctr.fields_count', { n: i18n.num(fieldCount) })}</p>}
+            </section>
+            {editorPane}
           </div>
-          {tab === 'edit' ? (
-            <div className="flex flex-1 flex-col p-4">
-              <label htmlFor="c-body" className="sr-only">{t('ctr.body')}</label>
-              <textarea id="c-body" ref={area} className="input min-h-[28rem] flex-1 resize-y font-mono text-[13px] leading-6" dir={rtl ? 'rtl' : 'ltr'}
-                value={body} onChange={(e) => setBody(e.target.value)} spellCheck={false} />
-              <p className="mt-2 text-xs text-muted" dir="auto">{t('ctr.body_help')}</p>
-            </div>
-          ) : (
-            <div className="flex-1 overflow-y-auto bg-surface-2/40 p-4 sm:p-6">
-              <article className="mx-auto max-w-2xl rounded-lg bg-surface p-6 shadow-sm ring-1 ring-line sm:p-8" dir={rtl ? 'rtl' : 'ltr'} lang={language}>
-                <ContractDoc body={substitute(body, allVars)} mode="preview" vars={allVars} formatDate={(iso) => formatDateFor(iso, language)} />
-              </article>
-            </div>
-          )}
-        </section>
-      </div>
+        )}
 
-      <div className="sticky bottom-0 z-20 -mx-4 mt-5 flex flex-wrap items-center justify-end gap-2 border-t border-line bg-surface/95 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6">
-        <p className="me-auto hidden text-xs text-muted md:block">{t('ctr.legal')}</p>
-        {contractId && <button className="btn-ghost text-danger" onClick={() => void remove()} disabled={!!busy}>{busy === 'delete' ? <Spinner /> : <Icon name="trash" />}{t('ctr.delete')}</button>}
-        <button className="btn-secondary" onClick={() => void save()} disabled={!!busy}>{busy === 'save' ? <Spinner /> : <Icon name="save" />}{t('ctr.save')}</button>
-        <button className="btn-primary" onClick={() => void openSend()} disabled={!!busy || !body.trim()}><Icon name="send" />{t('ctr.send')}</button>
+        {step === 2 && <>
+          <section className="card overflow-hidden">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-6 py-4">
+              <div className="min-w-0">
+                <h2 className="truncate text-base font-bold" dir="auto">{title || t('ctr.new')}</h2>
+                <p className="text-xs text-muted">{customer ? <bdi>{customerName(customer as unknown as Cust)}</bdi> : t('ctr.no_customer')} · {t(`lang.${language}` as MsgKey)}</p>
+              </div>
+              <StatusBadge status="DRAFT" />
+            </div>
+            {preview}
+          </section>
+          <p className="text-center text-xs text-muted">{t('ctr.legal')}</p>
+        </>}
+
+        <div className="flex items-center justify-end gap-3">
+          {contractId && <button className="btn-ghost me-auto text-danger" onClick={() => void remove()} disabled={!!busy}>{busy === 'delete' ? <Spinner /> : <Icon name="trash" />}{t('ctr.delete')}</button>}
+          <button className="btn-secondary h-11 px-8 text-base" disabled={step === 0} onClick={() => setStep((x) => x - 1)}>{t('ctr.prev_step')}</button>
+          {step < 2
+            ? <button className="btn-primary h-11 px-8 text-base" onClick={() => setStep((x) => x + 1)}>{t('ctr.next_step')}</button>
+            : <button className="btn-primary h-11 px-8 text-base" onClick={() => void openSend()} disabled={!!busy || !body.trim()}><Icon name="send" flip />{t('ctr.send')}</button>}
+        </div>
       </div>
 
       {sendOpen && contractId && (
@@ -391,6 +458,18 @@ function ContractEditor({ existing }: { existing?: Contract }) {
           onSent={() => nav(`/contracts/${contractId}`, { replace: true, state: { t: Date.now() } })} />
       )}
     </div>
+  );
+}
+
+function StepCard({ n, title, badge, children }: { n: number; title: string; badge?: React.ReactNode; children: React.ReactNode }) {
+  const { num } = useI18n();
+  return (
+    <section className="card p-8">
+      <div className="mb-6 flex items-center justify-between gap-2">
+        <h2 className="text-base font-bold">{num(n)}. {title}</h2>{badge}
+      </div>
+      {children}
+    </section>
   );
 }
 
@@ -532,17 +611,17 @@ function ContractDetail({ c, reload }: { c: Contract; reload: () => void }) {
 
   return (
     <div>
-      <PageHeader title={c.title} subtitle={c.contract_number}
+      <TopBar back="/contracts" title={<bdi>{c.title}</bdi>} subtitle={c.contract_number}
         actions={<>
-          <Link to="/contracts" className="btn-ghost"><Icon name="chevronRight" flip />{t('ctr.back')}</Link>
+          <StatusBadge status={c.status} />
           <button className={c.status === 'SIGNED' ? 'btn-primary' : 'btn-secondary'} onClick={() => void download()} disabled={!!busy}>
             {busy === 'pdf' ? <Spinner /> : <Icon name="download" />}{t(c.status === 'SIGNED' ? 'ctr.pdf' : 'ctr.pdf_preview')}
           </button>
         </>} />
       {err && <div className="mb-4" role="alert"><Alert tone="danger" onClose={() => setErr(null)}>{err}</Alert></div>}
 
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
-        <article className="card p-6 sm:p-8" dir={rtl ? 'rtl' : 'ltr'} lang={c.language}>
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+        <article className="card p-8 sm:p-12" dir={rtl ? 'rtl' : 'ltr'} lang={c.language}>
           <ContractDoc body={c.resolved_body ?? c.body} mode="static" values={c.field_values} formatDate={(iso) => formatDateFor(iso, c.language)} />
           <div className="mt-8 grid gap-6 border-t border-line pt-6 sm:grid-cols-2">
             <SigView label={String(c.seller.full_name ?? '')} name={c.seller_signer_name} img={c.seller_signature} at={c.seller_signed_at} />
