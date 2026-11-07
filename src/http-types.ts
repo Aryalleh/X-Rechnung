@@ -12,7 +12,7 @@ export interface Actor {
   userId?: string;
   /** Hashed session id (set for password sessions). */
   sessionId?: string;
-  via?: 'session' | 'access' | 'dev';
+  via?: 'session' | 'access' | 'dev' | 'eas';
 }
 
 /** Hono generic bindings + per-request variables. */

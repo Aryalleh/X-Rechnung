@@ -68,6 +68,7 @@ export function Mail() {
 
   const canManage = !!status?.me.canManage;
   const setupMode = id === 'setup' && canManage;
+  const devicesMode = id === 'devices';
   const configured = (status?.senders.length ?? 0) > 0;
 
   return (
@@ -80,7 +81,7 @@ export function Mail() {
         <nav className="flex flex-col gap-1" aria-label={t('mail.folders')}>
           {FOLDERS.map((f) => {
             const c = f.key === 'STARRED' ? counts?.starred ?? 0 : f.key === 'INBOX' ? counts?.folders.INBOX?.unread ?? 0 : f.key === 'TRASH' || f.key === 'ARCHIVE' ? 0 : 0;
-            const active = folder === f.key && !setupMode;
+            const active = folder === f.key && !setupMode && !devicesMode;
             return (
               <button key={f.key} onClick={() => { setFolder(f.key); if (id) nav('/mail'); }}
                 className={`flex h-10 items-center gap-3 rounded-lg px-3 text-sm font-medium transition-colors ${active ? 'bg-primary-soft text-primary-fg' : 'text-muted hover:bg-surface-2 hover:text-fg'}`}>
@@ -92,14 +93,25 @@ export function Mail() {
           })}
         </nav>
         <div className="mt-auto border-t border-line pt-4">
+          <Link to="/mail/devices" className={`mb-1 flex h-10 items-center gap-3 rounded-lg px-3 text-sm font-medium ${devicesMode ? 'bg-primary-soft text-primary-fg' : 'text-muted hover:bg-surface-2 hover:text-fg'}`}>
+            <Icon name="phone" className="h-[18px] w-[18px]" /><span className="flex-1">{t('mail.devices')}</span>
+          </Link>
           {canManage && <Link to="/mail/setup" className={`flex h-10 items-center gap-3 rounded-lg px-3 text-sm font-medium ${setupMode ? 'bg-primary-soft text-primary-fg' : 'text-muted hover:bg-surface-2 hover:text-fg'}`}>
             <Icon name="server" className="h-[18px] w-[18px]" /><span className="flex-1">{t('mail.server')}</span>
             {status && <span className={`h-2 w-2 rounded-full ${status.mx.ok && configured ? 'bg-success' : 'bg-warning'}`} aria-hidden="true" />}
           </Link>}
           {status && (
-            <div className="mt-3 space-y-1 px-3 text-xs text-muted">
-              <div className="eyebrow text-[10px]">{t('mail.my_addresses')}</div>
-              {status.senders.length ? status.senders.slice(0, 5).map((a) => <div key={a} className="truncate" dir="ltr">{a}</div>) : <div>{t('mail.no_mailbox')}</div>}
+            <div className="mt-3 space-y-3 px-3 text-xs text-muted">
+              {status.me.shared && status.senders.some((a) => a !== status.me.address) && (
+                <div className="space-y-1">
+                  <div className="eyebrow text-[10px]">{t('mail.shared_box')}</div>
+                  {status.senders.filter((a) => a !== status.me.address).slice(0, 4).map((a) => <div key={a} className="truncate" dir="ltr">{a}</div>)}
+                </div>
+              )}
+              <div className="space-y-1">
+                <div className="eyebrow text-[10px]">{t('mail.personal_box')}</div>
+                {status.me.address ? <div className="truncate" dir="ltr">{status.me.address}</div> : <div>{t('mail.no_mailbox')}</div>}
+              </div>
             </div>
           )}
         </div>
@@ -119,6 +131,7 @@ export function Mail() {
           {FOLDERS.map((f) => (
             <button key={f.key} onClick={() => { setFolder(f.key); if (id) nav('/mail'); }} className={`h-8 whitespace-nowrap rounded-full px-3 text-xs font-medium ${folder === f.key ? 'bg-primary text-on-primary' : 'bg-surface-2 text-muted'}`}>{t(`mail.f_${f.key}` as MsgKey)}</button>
           ))}
+          <Link to="/mail/devices" className="flex h-8 items-center whitespace-nowrap rounded-full bg-surface-2 px-3 text-xs font-medium text-muted">{t('mail.devices')}</Link>
           {canManage && <Link to="/mail/setup" className="flex h-8 items-center whitespace-nowrap rounded-full bg-surface-2 px-3 text-xs font-medium text-muted">{t('mail.server')}</Link>}
         </div>
         <div className="flex items-center justify-between px-4 py-2 text-xs text-muted">
@@ -167,6 +180,11 @@ export function Mail() {
           <div className="mx-auto max-w-3xl p-4 sm:p-8">
             <button className="btn-ghost btn-sm mb-4 md:hidden" onClick={() => nav('/mail')}><Icon name="arrowLeft" flip />{t('mail.back')}</button>
             <MailServerCard onSaved={(s) => setStatus(s)} />
+          </div>
+        ) : devicesMode ? (
+          <div className="mx-auto max-w-3xl p-4 sm:p-8">
+            <button className="btn-ghost btn-sm mb-4 md:hidden" onClick={() => nav('/mail')}><Icon name="arrowLeft" flip />{t('mail.back')}</button>
+            <MailDevices />
           </div>
         ) : id ? (
           <Reader key={id} id={id} onChanged={refresh} fmtTime={fmtTime}
@@ -411,6 +429,91 @@ function Compose({ draft, setDraft, senders, onSent }: { draft: Draft; setDraft:
 type MailForm = { mail_domain: string; addresses: string; invoice_addresses: string; forward_to: string; from_email: string; from_name: string; reply_to: string; signature: string };
 
 /** Mail server status (DNS checks) and the mailbox/sender settings. Also used on the Team & Email page. */
+interface Device { id: string; device_id: string; device_type: string | null; model: string | null; friendly_name: string | null; os: string | null; user_agent: string | null; blocked: number; first_seen: string; last_seen: string }
+
+/** Connect phone mail apps over Exchange ActiveSync: settings to type in + connected devices. */
+function MailDevices() {
+  const i18n = useI18n();
+  const { t, date } = i18n;
+  const toast = useToast();
+  const [d, setD] = useState<{ server: string; username: string; login: string; hasPassword: boolean; devices: Device[] } | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const load = useCallback(() => api.get<NonNullable<typeof d>>('/mail/devices').then(setD).catch((e) => setErr(errorText(e, i18n))), [i18n]);
+  useEffect(() => { void load(); }, [load]);
+  const act = async (dev: Device, action: 'block' | 'allow' | 'delete') => {
+    try {
+      if (action === 'delete') await api.del(`/mail/devices/${dev.id}`); else await api.post(`/mail/devices/${dev.id}/${action}`, {});
+      toast(t('common.saved')); await load();
+    } catch (e) { setErr(errorText(e, i18n)); }
+  };
+  const copy = (v: string) => { void navigator.clipboard?.writeText(v).then(() => toast(t('mail.dev_copied'))); };
+  if (!d) return err ? <Alert tone="danger">{err}</Alert> : <Loading />;
+  const rows: [string, string, boolean][] = [
+    [t('mail.dev_email'), d.username, true],
+    [t('mail.dev_server'), d.server, true],
+    [t('mail.dev_user'), d.username, true],
+    [t('mail.dev_password'), t('mail.dev_password_val'), false],
+    [t('mail.dev_domain'), t('mail.dev_domain_val'), false],
+    [t('mail.dev_ssl'), t('mail.dev_ssl_val'), false],
+  ];
+  const steps = (k: MsgKey) => t(k).split('\n');
+  return (
+    <div className="grid min-w-0 gap-6">
+      {err && <Alert tone="danger" onClose={() => setErr(null)}>{err}</Alert>}
+      <section className="card min-w-0 p-5 sm:p-6">
+        <h2 className="text-lg font-bold">{t('mail.devices_title')}</h2>
+        <p className="mt-1 text-[13px] text-muted">{t('mail.devices_sub')}</p>
+        {!d.hasPassword && <div className="mt-4"><Alert tone="warning">{t('mail.dev_need_pw')}</Alert></div>}
+        <dl className="mt-5 divide-y divide-line rounded-lg border border-line">
+          {rows.map(([k, v, mono]) => (
+            <div key={k} className="flex items-center gap-3 px-4 py-3">
+              <dt className="w-24 shrink-0 text-[13px] text-muted sm:w-32">{k}</dt>
+              <dd className={`min-w-0 flex-1 text-sm font-medium ${mono ? 'truncate font-mono' : ''}`} dir={mono ? 'ltr' : 'auto'}>{v}</dd>
+              {mono && <button className="btn-ghost btn-sm" onClick={() => copy(v)}>{t('mail.dev_copy')}</button>}
+            </div>
+          ))}
+        </dl>
+        <div className="mt-5 grid gap-4 2xl:grid-cols-2">
+          {(['android', 'ios'] as const).map((p) => (
+            <div key={p} className="rounded-lg bg-surface-2 p-4">
+              <h3 className="text-sm font-semibold">{t(`mail.dev_${p}_title` as MsgKey)}</h3>
+              <ol className="mt-2 list-decimal space-y-1 ps-5 text-[13px] text-muted">{steps(`mail.dev_${p}_steps` as MsgKey).map((s) => <li key={s}>{s}</li>)}</ol>
+            </div>
+          ))}
+        </div>
+        <p className="mt-4 text-xs text-muted">{t('mail.dev_outlook_note')}</p>
+      </section>
+
+      <section className="card overflow-hidden">
+        <div className="flex items-center justify-between border-b border-line px-6 py-4">
+          <h2 className="font-semibold">{t('mail.dev_list')}</h2>
+          <button className="btn-ghost btn-icon h-9 w-9" aria-label={t('mail.refresh')} onClick={() => void load()}><Icon name="refresh" /></button>
+        </div>
+        {d.devices.length === 0 ? <div className="px-6 py-8 text-center text-sm text-muted">{t('mail.dev_none')}</div> : (
+          <ul className="divide-y divide-line">
+            {d.devices.map((dev) => (
+              <li key={dev.id} className="flex flex-wrap items-center gap-3 px-5 py-4">
+                <span className={`flex h-10 w-10 items-center justify-center rounded-full ${dev.blocked ? 'bg-surface-2 text-muted' : 'bg-primary-soft text-primary-fg'}`}><Icon name="phone" className="h-5 w-5" /></span>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-medium">{dev.friendly_name || dev.model || dev.device_type || dev.device_id}</div>
+                  <div className="truncate text-xs text-muted">{[dev.device_type, dev.os].filter(Boolean).join(' · ')} · {t('mail.dev_last_seen')} {date(dev.last_seen)}</div>
+                </div>
+                {dev.blocked ? (
+                  <>
+                    <span className="badge-status bg-warning-soft text-warning">{t('mail.dev_blocked')}</span>
+                    <button className="btn-secondary btn-sm" onClick={() => void act(dev, 'allow')}>{t('mail.dev_allow')}</button>
+                    <button className="btn-ghost btn-sm" onClick={() => void act(dev, 'delete')}>{t('mail.dev_forget')}</button>
+                  </>
+                ) : <button className="btn-secondary btn-sm" onClick={() => void act(dev, 'block')}>{t('mail.dev_remove')}</button>}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </div>
+  );
+}
+
 export function MailServerCard({ onSaved }: { onSaved?: (s: MailStatus) => void }) {
   const i18n = useI18n();
   const { t, locale } = i18n;

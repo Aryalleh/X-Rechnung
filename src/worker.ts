@@ -29,6 +29,7 @@ import { exportRoutes } from './routes/export';
 
 import { handleInboundEmail } from './email/inbound';
 import { mailRoutes } from './routes/mail';
+import { easRoutes } from './eas/activesync';
 import { handleQueue } from './queue/consumer';
 import { handleScheduled } from './cron';
 
@@ -40,6 +41,9 @@ app.use('*', async (c, next) => {
   await next();
 });
 app.use('*', securityHeaders);
+
+// Exchange ActiveSync + Autodiscover for phone mail apps (own Basic auth, no CSRF: not a browser API).
+app.route('/', easRoutes);
 
 // API pipeline.
 app.use('/api/*', setupGate);

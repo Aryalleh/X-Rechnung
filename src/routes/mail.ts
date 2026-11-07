@@ -4,7 +4,8 @@ import { z } from 'zod';
 import type { HonoEnv } from '../http-types';
 import { ok } from '../lib/response';
 import { AppError } from '../lib/errors';
-import { run } from '../db/client';
+import { all, one, run } from '../db/client';
+import { audit } from '../services/audit-service';
 import { requireRole } from '../middleware/access';
 import { rateLimit } from '../middleware/rate-limit';
 import { ingestFile } from '../services/einvoice/ingest';
@@ -33,6 +34,30 @@ mailRoutes.get('/status', async (c) => {
   const role = c.get('actor')!.role;
   const canManage = role === 'OWNER' || role === 'ADMIN';
   return ok(c, { ...status, senders: senderAddresses(s, sc), settings: canManage ? s : null, me: { address: sc.own, canManage, shared: sc.shared } });
+});
+
+// ------------------------------------------------------------ phones (ActiveSync)
+mailRoutes.get('/devices', async (c) => {
+  const actor = c.get('actor')!;
+  const me = actor.userId ? await one<{ has_pw: number }>(c.env.DB, `SELECT password_hash IS NOT NULL AS has_pw FROM admin_users WHERE id=?1`, actor.userId) : null;
+  const devices = actor.userId ? await all(c.env.DB, `SELECT id, device_id, device_type, model, friendly_name, os, user_agent, blocked, first_seen, last_seen
+    FROM eas_devices WHERE user_id=?1 ORDER BY last_seen DESC`, actor.userId) : [];
+  return ok(c, { server: new URL(c.req.url).host, username: actor.mailAddress || actor.email, login: actor.email, hasPassword: !!me?.has_pw, devices });
+});
+mailRoutes.post('/devices/:id/:action{block|allow}', async (c) => {
+  const actor = c.get('actor')!;
+  const d = await one<{ id: string }>(c.env.DB, `SELECT id FROM eas_devices WHERE id=?1 AND user_id=?2`, c.req.param('id'), actor.userId ?? '');
+  if (!d) throw new AppError('NOT_FOUND');
+  const block = c.req.param('action') === 'block';
+  await run(c.env.DB, `UPDATE eas_devices SET blocked=?2, sync_cache=NULL, ping_cache=NULL WHERE id=?1`, d.id, block ? 1 : 0);
+  if (block) await run(c.env.DB, `DELETE FROM eas_sync_state WHERE device_pk=?1`, d.id);
+  await audit(c.env.DB, { entityType: 'eas_device', entityId: d.id, eventType: block ? 'EAS_DEVICE_BLOCKED' : 'EAS_DEVICE_ALLOWED', actorEmail: actor.email });
+  return ok(c, { blocked: block });
+});
+mailRoutes.delete('/devices/:id', async (c) => {
+  const actor = c.get('actor')!;
+  await run(c.env.DB, `DELETE FROM eas_devices WHERE id=?1 AND user_id=?2 AND blocked=1`, c.req.param('id'), actor.userId ?? '');
+  return ok(c, { deleted: true });
 });
 
 mailRoutes.get('/:id', async (c) => {
@@ -168,3 +193,4 @@ mailRoutes.post('/:id/attachments/:att/import', requireRole('OWNER', 'ADMIN', 'A
   if (res.receivedInvoiceId) await run(c.env.DB, `UPDATE mail_messages SET related_type='received_invoice', related_id=?2 WHERE id=?1`, m.id, res.receivedInvoiceId);
   return ok(c, res, 201);
 });
+

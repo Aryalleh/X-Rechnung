@@ -156,6 +156,8 @@ export function senderAddresses(s: MailSettings, scope?: MailScope): string[] {
 
 export interface ComposeInput {
   from?: string; to: string; cc?: string; bcc?: string; subject: string; text: string;
+  /** Optional HTML alternative (e.g. from a phone's mail app). */
+  html?: string;
   attachments?: { filename: string; mime: string; data: string }[];
   reply_to_id?: string; forward_id?: string;
 }
@@ -197,6 +199,7 @@ export async function sendMail(env: Env, input: ComposeInput, actor: string, sco
   const msg: OutboundMessage = {
     from, fromName: s.fromName || undefined, to: input.to, subject: input.subject,
     text: s.signature && !input.text.includes(s.signature) ? `${input.text}\n\n-- \n${s.signature}` : input.text,
+    ...(input.html ? { html: input.html } : {}),
     ...(input.cc ? { cc: input.cc } : {}), ...(input.bcc ? { bcc: input.bcc } : {}),
     ...(s.replyTo ? { replyTo: s.replyTo } : {}), ...(attachments.length ? { attachments } : {}),
     ...(inReplyTo ? { inReplyTo } : {}), ...(references ? { references } : {}),
