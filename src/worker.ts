@@ -30,6 +30,7 @@ import { exportRoutes } from './routes/export';
 import { handleInboundEmail } from './email/inbound';
 import { mailRoutes } from './routes/mail';
 import { easRoutes } from './eas/activesync';
+import { pimRoutes } from './routes/pim';
 import { handleQueue } from './queue/consumer';
 import { handleScheduled } from './cron';
 
@@ -59,7 +60,8 @@ app.route('/api/system', systemRoutes); // /bootstrap is public; rest behind acc
 app.use('/api/*', requireAccess);
 // READ_ONLY users may look but never change anything (own password lives under /api/auth, mounted above).
 app.use('/api/*', async (c, next) => {
-  if (c.get('actor')?.role === 'READ_ONLY' && !['GET', 'HEAD', 'OPTIONS'].includes(c.req.method.toUpperCase())) throw new AppError('FORBIDDEN');
+  // (Their own calendar, contacts and notes are personal data and stay editable.)
+  if (c.get('actor')?.role === 'READ_ONLY' && !c.req.path.startsWith('/api/pim/') && !['GET', 'HEAD', 'OPTIONS'].includes(c.req.method.toUpperCase())) throw new AppError('FORBIDDEN');
   await next();
 });
 app.route('/api/settings', settingsRoutes);
@@ -73,6 +75,7 @@ app.route('/api/export', exportRoutes);
 app.route('/api/contracts', contractRoutes);
 app.route('/api/contract-templates', contractTemplateRoutes);
 app.route('/api/mail', mailRoutes);
+app.route('/api/pim', pimRoutes);
 
 // Centralized error handler → standardized envelope.
 app.onError((err, c) => fail(c, err, c.env.ENVIRONMENT));

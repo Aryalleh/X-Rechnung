@@ -24,8 +24,8 @@ describe('ActiveSync WBXML', () => {
     expect([...child(back, 'ComposeMail:Mime')!.bytes!]).toEqual([0x46, 0x72, 0x00, 0xff]);
   });
   it('tolerates unknown code pages', () => {
-    // page 1 (Contacts) tag 0x05 with text "x"
-    const raw = new Uint8Array([0x03, 0x01, 0x6a, 0x00, 0x00, 0x01, 0x45, 0x03, 0x78, 0x00, 0x01]);
-    expect(decode(raw)).toMatchObject({ tag: 'P1:0x5', text: 'x' });
+    // page 30 (not defined) tag 0x05 with text "x"
+    const raw = new Uint8Array([0x03, 0x01, 0x6a, 0x00, 0x00, 0x1e, 0x45, 0x03, 0x78, 0x00, 0x01]);
+    expect(decode(raw)).toMatchObject({ tag: 'P30:0x5', text: 'x' });
   });
 });

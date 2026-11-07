@@ -20,6 +20,10 @@ import {
 import { buildMime } from '../services/email/sender';
 import { bodiesOf, parseAddress, parseEmail } from '../email/mime';
 import { child, decode, el, encode, flag, kids, textOf, type WNode } from './wbxml';
+import { contactFromApp, contactProps, eventFromApp, eventProps, noteFromApp, noteProps } from './pim';
+import {
+  getContact, getEvent, getNote, pimDelete, pimVersions, saveContact, saveEvent, saveNote, suggestAddresses, type PimKind,
+} from '../services/pim-service';
 
 export const EAS_PATH = '/Microsoft-Server-ActiveSync';
 const VERSIONS = '14.0,14.1';
@@ -37,7 +41,16 @@ const FOLDERS = [
   { id: 'sent', folder: 'SENT', type: 5, name: 'Sent Items' },
   { id: 'outbox', folder: null, type: 6, name: 'Outbox' },
   { id: 'archive', folder: 'ARCHIVE', type: 12, name: 'Archive' },
+  // Added in folder-hierarchy version 2.
+  { id: 'calendar', folder: null, type: 8, name: 'Calendar' },
+  { id: 'contacts', folder: null, type: 9, name: 'Contacts' },
+  { id: 'notes', folder: null, type: 10, name: 'Notes' },
 ] as const;
+/** Folder hierarchy versions: v1 = mail folders, v2 = + calendar/contacts/notes. */
+const HIERARCHY_VERSION = 2;
+const FOLDERS_SINCE: Record<string, number> = { calendar: 2, contacts: 2, notes: 2 };
+const PIM: Record<string, PimKind> = { calendar: 'calendar', contacts: 'contacts', notes: 'notes' };
+const CLASS_OF: Record<PimKind, string> = { calendar: 'Calendar', contacts: 'Contacts', notes: 'Notes' };
 const folderById = (id: string | undefined) => FOLDERS.find((f) => f.id === id);
 const idOfFolder = (folder: string) => FOLDERS.find((f) => f.folder === folder)?.id ?? 'inbox';
 
@@ -148,6 +161,7 @@ async function loadDevice(env: Env, userId: string, req: Req, ua: string | undef
 // ----------------------------------------------------------------- mailbox state
 
 async function currentItems(ctx: Ctx, collectionId: string, filterType: number): Promise<Snapshot> {
+  if (PIM[collectionId]) return pimVersions(ctx.env.DB, PIM[collectionId]!, ctx.actor.userId!);
   const f = folderById(collectionId);
   if (!f?.folder) return {};
   const params: unknown[] = [];
@@ -298,14 +312,16 @@ async function remove(ctx: Ctx, id: string, collectionId: string, asMove: boolea
 
 async function folderSync(_ctx: Ctx, req: WNode | null): Promise<Response> {
   const key = textOf(req, 'FolderHierarchy:SyncKey') ?? '0';
-  // The folder set is fixed, so after the initial list there is never anything new.
-  if (key !== '0') return wbxml(el('FolderHierarchy:FolderSync', el('FolderHierarchy:Status', 1), el('FolderHierarchy:SyncKey', key), el('FolderHierarchy:Changes', el('FolderHierarchy:Count', 0))));
+  // The sync key is the hierarchy version the phone has; send the folders added since then.
+  const have = Number(key);
+  if (!Number.isInteger(have) || have < 0 || have > HIERARCHY_VERSION) return wbxml(el('FolderHierarchy:FolderSync', el('FolderHierarchy:Status', 9)));
+  const added = FOLDERS.filter((f) => (FOLDERS_SINCE[f.id] ?? 1) > have);
   return wbxml(el('FolderHierarchy:FolderSync',
     el('FolderHierarchy:Status', 1),
-    el('FolderHierarchy:SyncKey', '1'),
+    el('FolderHierarchy:SyncKey', String(HIERARCHY_VERSION)),
     el('FolderHierarchy:Changes',
-      el('FolderHierarchy:Count', FOLDERS.length),
-      FOLDERS.map((f) => el('FolderHierarchy:Add',
+      el('FolderHierarchy:Count', added.length),
+      added.map((f) => el('FolderHierarchy:Add',
         el('FolderHierarchy:ServerId', f.id), el('FolderHierarchy:ParentId', '0'),
         el('FolderHierarchy:DisplayName', f.name), el('FolderHierarchy:Type', f.type))),
     ),
@@ -370,6 +386,7 @@ async function syncCollection(ctx: Ctx, coll: WNode, globalWindow: number, quiet
   if (state && key === state.sync_key) base = JSON.parse(state.snapshot) as Snapshot;
   else if (state && key === state.prev_key && state.prev_snapshot) base = JSON.parse(state.prev_snapshot) as Snapshot;
   else return { node: el('AirSync:Collection', head('0', 3)), changed: true }; // unknown key → client resyncs
+  if (PIM[collId]) return syncPim(ctx, PIM[collId]!, coll, collId, key, state.sync_key, base, opts, globalWindow, quiet);
 
   const original = { ...base };
   const known = base;
@@ -453,6 +470,97 @@ async function refreshCachedKeys(ctx: Ctx, req: WNode | null): Promise<void> {
     const k = child(c, 'AirSync:SyncKey');
     if (st && k) k.text = st.sync_key;
   }
+}
+
+// ----------------------------------------------------------------- calendar / contacts / notes
+
+async function pimProps(ctx: Ctx, kind: PimKind, id: string, opts: CollOptions): Promise<(WNode | null)[] | null> {
+  const owner = ctx.actor.userId!;
+  try {
+    if (kind === 'calendar') return eventProps(await getEvent(ctx.env.DB, owner, id), opts.prefs);
+    if (kind === 'contacts') return contactProps(await getContact(ctx.env.DB, owner, id), opts.prefs);
+    return noteProps(await getNote(ctx.env.DB, owner, id), opts.prefs);
+  } catch { return null; }
+}
+
+async function pimSave(ctx: Ctx, kind: PimKind, app: WNode | undefined, id?: string): Promise<{ id: string; version: number }> {
+  const db = ctx.env.DB; const owner = ctx.actor.userId!;
+  if (kind === 'calendar') {
+    const prev = id ? await getEvent(db, owner, id) : undefined;
+    const r = await saveEvent(db, owner, eventFromApp(app, prev), id);
+    return { id: r.id, version: r.version };
+  }
+  if (kind === 'contacts') {
+    const prev = id ? await getContact(db, owner, id) : undefined;
+    const r = await saveContact(db, owner, contactFromApp(app, prev), id);
+    return { id: r.id, version: r.version };
+  }
+  const prev = id ? await getNote(db, owner, id) : undefined;
+  const r = await saveNote(db, owner, noteFromApp(app, prev), id);
+  return { id: r.id, version: r.version };
+}
+
+async function syncPim(ctx: Ctx, kind: PimKind, coll: WNode, collId: string, key: string, storedKey: string, base: Snapshot,
+  opts: CollOptions, globalWindow: number, quiet: boolean): Promise<{ node: WNode | null; changed: boolean }> {
+  const original = { ...base };
+  const known = base;
+  const responses: WNode[] = [];
+  const cmds = child(coll, 'AirSync:Commands');
+  for (const c of cmds?.children ?? []) {
+    const sid = textOf(c, 'AirSync:ServerId') ?? '';
+    try {
+      if (c.tag === 'AirSync:Add') {
+        const r = await pimSave(ctx, kind, child(c, 'AirSync:ApplicationData'));
+        known[r.id] = String(r.version);
+        responses.push(el('AirSync:Add', el('AirSync:ClientId', textOf(c, 'AirSync:ClientId') ?? ''), el('AirSync:ServerId', r.id), el('AirSync:Status', 1)));
+      } else if (c.tag === 'AirSync:Change') {
+        const r = await pimSave(ctx, kind, child(c, 'AirSync:ApplicationData'), sid);
+        known[r.id] = String(r.version);
+      } else if (c.tag === 'AirSync:Delete') {
+        await pimDelete(ctx.env.DB, kind, ctx.actor.userId!, sid);
+        delete known[sid];
+      } else if (c.tag === 'AirSync:Fetch') {
+        const props = await pimProps(ctx, kind, sid, opts);
+        responses.push(props
+          ? el('AirSync:Fetch', el('AirSync:ServerId', sid), el('AirSync:Status', 1), el('AirSync:ApplicationData', props))
+          : el('AirSync:Fetch', el('AirSync:ServerId', sid), el('AirSync:Status', 8)));
+      }
+    } catch {
+      if (c.tag === 'AirSync:Add') responses.push(el('AirSync:Add', el('AirSync:ClientId', textOf(c, 'AirSync:ClientId') ?? ''), el('AirSync:Status', 6)));
+      else responses.push(el(c.tag, el('AirSync:ServerId', sid), el('AirSync:Status', c.tag === 'AirSync:Change' ? 8 : 6)));
+    }
+  }
+
+  const getChanges = flag(coll, 'AirSync:GetChanges') ?? true;
+  const window = Math.max(1, Math.min(512, Number(textOf(coll, 'AirSync:WindowSize') ?? globalWindow)));
+  const commands: WNode[] = [];
+  let more = false;
+  if (getChanges) {
+    const cur = await currentItems(ctx, collId, opts.filterType);
+    const d = diff(cur, known);
+    let budget = window;
+    for (const id of d.deletes) { if (budget-- <= 0) { more = true; break; } commands.push(el('AirSync:Delete', el('AirSync:ServerId', id))); delete known[id]; }
+    for (const [list, tag] of [[d.changes, 'AirSync:Change'], [d.adds, 'AirSync:Add']] as const) {
+      for (const id of list) {
+        if (more || budget-- <= 0) { more = true; break; }
+        const props = await pimProps(ctx, kind, id, opts);
+        if (!props) continue;
+        commands.push(el(tag, el('AirSync:ServerId', id), el('AirSync:ApplicationData', props)));
+        known[id] = cur[id]!;
+      }
+    }
+  }
+  const changed = commands.length > 0 || responses.length > 0 || (cmds?.children.length ?? 0) > 0;
+  if (quiet && !changed) return { node: null, changed: false };
+  const newKey = String(Number(storedKey) + 1);
+  await putState(ctx, collId, newKey, known, key, original, opts);
+  return {
+    node: el('AirSync:Collection', el('AirSync:SyncKey', newKey), el('AirSync:CollectionId', collId), el('AirSync:Status', 1),
+      responses.length ? el('AirSync:Responses', responses) : null,
+      more ? el('AirSync:MoreAvailable') : null,
+      commands.length ? el('AirSync:Commands', commands) : null),
+    changed: true,
+  };
 }
 
 async function pendingFor(ctx: Ctx, collId: string): Promise<number | null> {
@@ -610,6 +718,13 @@ async function itemOperations(ctx: Ctx, req: WNode | null): Promise<Response> {
       const longId = textOf(op, 'Search:LongId');
       const sid = textOf(op, 'AirSync:ServerId') ?? longId ?? '';
       const coll = textOf(op, 'AirSync:CollectionId');
+      if (coll && PIM[coll]) {
+        const props = await pimProps(ctx, PIM[coll]!, sid, readOptions(child(op, 'ItemOperations:Options')));
+        out.push(props
+          ? el('ItemOperations:Fetch', el('ItemOperations:Status', 1), el('AirSync:CollectionId', coll), el('AirSync:ServerId', sid), el('AirSync:Class', CLASS_OF[PIM[coll]!]), el('ItemOperations:Properties', props))
+          : el('ItemOperations:Fetch', el('ItemOperations:Status', 6), el('AirSync:CollectionId', coll), el('AirSync:ServerId', sid)));
+        continue;
+      }
       const m = await getMail(ctx.env.DB, sid, ctx.scope).catch(() => null);
       if (!m) { out.push(el('ItemOperations:Fetch', el('ItemOperations:Status', 6), longId ? el('Search:LongId', longId) : el('AirSync:ServerId', sid))); continue; }
       const opts = readOptions(child(op, 'ItemOperations:Options'));
@@ -643,7 +758,14 @@ async function search(ctx: Ctx, req: WNode | null): Promise<Response> {
   const opts = readOptions(child(store, 'Search:Options'), { filterType: 0, prefs: [{ type: 1, truncation: 2048 }], mime: 0 });
   const results: WNode[] = [];
   let total = 0;
-  if (name === 'mailbox' && q) {
+  if (name === 'gal' && q) {
+    // Recipient lookup: own contacts (+ customers for business users).
+    const hits = await suggestAddresses(ctx.env.DB, ctx.actor.userId!, q, ctx.actor.role !== 'MAIL_USER');
+    total = hits.length;
+    for (const h of hits.slice(from ?? 0, (to ?? 49) + 1)) {
+      results.push(el('Search:Result', el('Search:Properties', el('GAL:DisplayName', h.name || h.email), el('GAL:EmailAddress', h.email))));
+    }
+  } else if (name === 'mailbox' && q) {
     const folders = coll && folderById(coll)?.folder ? [folderById(coll)!.folder!] : ['INBOX', 'SENT', 'ARCHIVE'];
     const hits: { id: string; folder: string; created_at: string }[] = [];
     for (const f of folders) {

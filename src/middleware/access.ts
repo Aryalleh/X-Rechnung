@@ -154,7 +154,7 @@ export const requireAccess: MiddlewareHandler<HonoEnv> = async (c, next) => {
 /** Email-only users may use the mailbox and their own account endpoints — nothing else. */
 function mailOnlyGuard(actor: Actor, path: string): void {
   if (actor.role !== 'MAIL_USER') return;
-  if (path === '/api/mail' || path.startsWith('/api/mail/') || path.startsWith('/api/auth/')) return;
+  if (path === '/api/mail' || path.startsWith('/api/mail/') || path.startsWith('/api/pim/') || path.startsWith('/api/auth/')) return;
   throw new AppError('FORBIDDEN', 'mailbox-only account');
 }
 

@@ -16,6 +16,9 @@ import { Invoices } from './pages/Invoices';
 import { Inbox } from './pages/Inbox';
 import { InboxDetail } from './pages/InboxDetail';
 import { Mail } from './pages/Mail';
+import { Calendar } from './pages/Calendar';
+import { Contacts } from './pages/Contacts';
+import { Notes } from './pages/Notes';
 import { Settings } from './pages/Settings';
 import { Login } from './pages/Login';
 import { Contracts } from './pages/Contracts';
@@ -110,7 +113,12 @@ const NAV: { to: string; key: MsgKey; icon: IconName }[] = [
   { to: '/customers', key: 'nav.customers', icon: 'users' },
   { to: '/inbox', key: 'nav.inbox', icon: 'inbox' },
   { to: '/mail', key: 'nav.mail', icon: 'mail' },
+  { to: '/calendar', key: 'nav.calendar', icon: 'calendar' },
+  { to: '/contacts', key: 'nav.contacts', icon: 'contact' },
+  { to: '/notes', key: 'nav.notes', icon: 'note' },
 ];
+/** What email-only users see. */
+const MAIL_NAV = ['/mail', '/calendar', '/contacts', '/notes'];
 const NAV_CONFIG: { to: string; key: MsgKey; icon: IconName; end?: boolean }[] = [
   { to: '/settings/users', key: 'nav.team', icon: 'user' },
   { to: '/settings', key: 'nav.settings', icon: 'settings' },
@@ -177,7 +185,7 @@ function Shell({ appName, me, onLogout }: { appName: string; me: Me; onLogout: (
         <div className="mt-1.5 ps-11 text-xs text-muted">{t('app.tagline')}</div>
       </div>
       <div className="flex flex-col gap-1">
-        {(mailOnly ? NAV.filter((n) => n.to === '/mail') : NAV).map((n) => item(n, n.to === '/' || n.to === '/invoices'))}
+        {(mailOnly ? NAV.filter((n) => MAIL_NAV.includes(n.to)) : NAV).map((n) => item(n, n.to === '/' || n.to === '/invoices'))}
       </div>
       {mailOnly && me.mailAddress && <div className="mt-6 truncate px-3 text-xs text-muted" dir="ltr">{me.mailAddress}</div>}
       {!mailOnly && <><div className="eyebrow mb-2 mt-8 px-3 text-[11px]">{t('nav.config')}</div>
@@ -235,6 +243,11 @@ function Shell({ appName, me, onLogout }: { appName: string; me: Me; onLogout: (
             <Routes>
               <Route path="/mail" element={<Mail />} />
               <Route path="/mail/:id" element={<Mail />} />
+              <Route path="/calendar" element={<Calendar />} />
+              <Route path="/contacts" element={<Contacts />} />
+              <Route path="/contacts/:id" element={<Contacts />} />
+              <Route path="/notes" element={<Notes />} />
+              <Route path="/notes/:id" element={<Notes />} />
               <Route path="*" element={<Navigate to="/mail" replace />} />
             </Routes>
           ) : <Routes>
@@ -248,6 +261,11 @@ function Shell({ appName, me, onLogout }: { appName: string; me: Me; onLogout: (
             <Route path="/inbox/:id" element={<InboxDetail />} />
             <Route path="/mail" element={<Mail />} />
             <Route path="/mail/:id" element={<Mail />} />
+            <Route path="/calendar" element={<Calendar />} />
+            <Route path="/contacts" element={<Contacts />} />
+            <Route path="/contacts/:id" element={<Contacts />} />
+            <Route path="/notes" element={<Notes />} />
+            <Route path="/notes/:id" element={<Notes />} />
             <Route path="/settings/*" element={<Settings />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>}

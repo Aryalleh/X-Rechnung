@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import { errorText, useI18n } from '../i18n';
 import type { MsgKey } from '../i18n';
@@ -55,6 +55,14 @@ export function Mail() {
   useEffect(() => { const h = setTimeout(() => void loadList(), q ? 250 : 0); return () => clearTimeout(h); }, [loadList, q]);
   useEffect(() => { void loadCounts(); }, [loadCounts, id]);
   useEffect(() => { api.get<MailStatus>('/mail/status').then(setStatus).catch(() => {}); }, []);
+  // /mail?to=… (e.g. "Write email" on a contact) opens a new message.
+  const [params, setParams] = useSearchParams();
+  useEffect(() => {
+    const to = params.get('to');
+    if (!to || !status) return;
+    setDraft({ from: status.me.address || status.senders[0] || '', to, cc: '', bcc: '', subject: '', text: '', files: [], showCc: false });
+    setParams({}, { replace: true });
+  }, [params, status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const refresh = () => { void loadList(); void loadCounts(); };
   const fmtTime = (iso: string) => {
@@ -350,6 +358,19 @@ function Compose({ draft, setDraft, senders, onSent }: { draft: Draft; setDraft:
   const fileRef = useRef<HTMLInputElement>(null);
   const set = (p: Partial<Draft>) => setDraft({ ...draft, ...p });
   const size = useMemo(() => draft.files.reduce((n, f) => n + f.size, 0), [draft.files]);
+  // Address suggestions (contacts + customers) for the last address being typed.
+  const [suggest, setSuggest] = useState<{ value: string; label: string }[]>([]);
+  useEffect(() => {
+    const parts = draft.to.split(',');
+    const cur = parts[parts.length - 1]!.trim();
+    if (cur.length < 2 || cur.includes('@') && /\.[a-z]{2,}$/i.test(cur)) { setSuggest([]); return; }
+    const head = parts.slice(0, -1).map((x) => x.trim()).filter(Boolean);
+    const h = setTimeout(() => {
+      api.get<{ name: string; email: string }[]>(`/pim/contacts/suggest?q=${encodeURIComponent(cur)}`)
+        .then((r) => setSuggest(r.map((x) => ({ value: [...head, x.email].join(', '), label: x.name || x.email })))).catch(() => setSuggest([]));
+    }, 200);
+    return () => clearTimeout(h);
+  }, [draft.to]);
 
   async function addFiles(list: FileList | null) {
     if (!list) return;
@@ -391,7 +412,8 @@ function Compose({ draft, setDraft, senders, onSent }: { draft: Draft; setDraft:
             </label>
           )}
           <label className="flex items-center gap-2 px-4"><span className="w-14 text-muted">{t('mail.to')}</span>
-            <input className="h-10 flex-1 bg-transparent outline-none" dir="ltr" autoFocus={!draft.to} value={draft.to} onChange={(e) => set({ to: e.target.value })} placeholder="name@example.com" />
+            <input className="h-10 flex-1 bg-transparent outline-none" dir="ltr" autoFocus={!draft.to} value={draft.to} onChange={(e) => set({ to: e.target.value })} placeholder="name@example.com" list="mail-suggest" autoComplete="off" />
+            <datalist id="mail-suggest">{suggest.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}</datalist>
             {!draft.showCc && <button type="button" className="text-xs font-medium text-muted hover:text-fg" onClick={() => set({ showCc: true })}>Cc/Bcc</button>}
           </label>
           {draft.showCc && <>
