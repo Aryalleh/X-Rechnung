@@ -6,7 +6,8 @@ import { ok } from '../lib/response';
 import { AppError } from '../lib/errors';
 import { parseBody } from '../lib/validate-request';
 import {
-  getContact, getEvent, getNote, listContacts, listEvents, listNotes, pimDelete, saveContact, saveEvent, saveNote, suggestAddresses, type EventInput, type PimKind,
+  getContact, getEvent, getNote, getTask, listContacts, listEvents, listNotes, listTasks, pimDelete, saveContact, saveEvent, saveNote, saveTask, suggestAddresses,
+  type EventInput, type PimKind, type TaskInput,
 } from '../services/pim-service';
 
 export const pimRoutes = new Hono<HonoEnv>();
@@ -64,7 +65,31 @@ pimRoutes.get('/notes/:id', async (c) => ok(c, await getNote(c.env.DB, owner(c),
 pimRoutes.post('/notes', async (c) => ok(c, await saveNote(c.env.DB, owner(c), await parseBody(c, noteSchema)), 201));
 pimRoutes.put('/notes/:id', async (c) => ok(c, await saveNote(c.env.DB, owner(c), await parseBody(c, noteSchema), c.req.param('id'))));
 
-pimRoutes.delete('/:kind{calendar|contacts|notes}/:id', async (c) => {
+// Tasks (to-dos)
+const taskSchema = z.object({
+  subject: z.string().max(500), body: z.string().max(50_000).nullable().optional(), complete: z.boolean().optional(),
+  due_date: z.string().max(40).nullable().optional(), due_utc: z.string().max(40).nullable().optional(),
+  start_date: z.string().max(40).nullable().optional(), start_utc: z.string().max(40).nullable().optional(),
+  importance: z.number().int().min(0).max(2).optional(), reminder_at: z.string().max(40).nullable().optional(),
+});
+pimRoutes.get('/tasks', async (c) => ok(c, await listTasks(c.env.DB, owner(c))));
+pimRoutes.get('/tasks/:id', async (c) => ok(c, await getTask(c.env.DB, owner(c), c.req.param('id'))));
+pimRoutes.post('/tasks', async (c) => ok(c, await saveTask(c.env.DB, owner(c), await parseBody(c, taskSchema)), 201));
+pimRoutes.put('/tasks/:id', async (c) => {
+  const prev = await getTask(c.env.DB, owner(c), c.req.param('id'));
+  const body = await parseBody(c, taskSchema.partial());
+  // Partial update (e.g. just ticking it off); phone-only fields are kept.
+  const merged: TaskInput = {
+    subject: prev.subject, body: prev.body, complete: !!prev.complete, completed_at: prev.completed_at, due_date: prev.due_date, due_utc: prev.due_utc,
+    start_date: prev.start_date, start_utc: prev.start_utc, importance: prev.importance, reminder_at: prev.reminder_at, sensitivity: prev.sensitivity,
+    recurrence: prev.recurrence_json ? JSON.parse(prev.recurrence_json) : null, categories: prev.categories_json ? JSON.parse(prev.categories_json) : null,
+    ...body,
+  };
+  if (body.complete !== undefined && body.complete !== !!prev.complete) merged.completed_at = null;
+  return ok(c, await saveTask(c.env.DB, owner(c), merged, prev.id));
+});
+
+pimRoutes.delete('/:kind{calendar|contacts|notes|tasks}/:id', async (c) => {
   if (!(await pimDelete(c.env.DB, c.req.param('kind') as PimKind, owner(c), c.req.param('id')))) throw new AppError('NOT_FOUND');
   return ok(c, { deleted: true });
 });

@@ -20,9 +20,9 @@ import {
 import { buildMime } from '../services/email/sender';
 import { bodiesOf, parseAddress, parseEmail } from '../email/mime';
 import { child, decode, el, encode, flag, kids, textOf, type WNode } from './wbxml';
-import { contactFromApp, contactProps, eventFromApp, eventProps, noteFromApp, noteProps } from './pim';
+import { contactFromApp, contactProps, eventFromApp, eventProps, noteFromApp, noteProps, taskFromApp, taskProps } from './pim';
 import {
-  getContact, getEvent, getNote, pimDelete, pimVersions, saveContact, saveEvent, saveNote, suggestAddresses, type PimKind,
+  getContact, getEvent, getNote, getTask, pimDelete, pimVersions, saveContact, saveEvent, saveNote, saveTask, suggestAddresses, type PimKind,
 } from '../services/pim-service';
 
 export const EAS_PATH = '/Microsoft-Server-ActiveSync';
@@ -45,12 +45,14 @@ const FOLDERS = [
   { id: 'calendar', folder: null, type: 8, name: 'Calendar' },
   { id: 'contacts', folder: null, type: 9, name: 'Contacts' },
   { id: 'notes', folder: null, type: 10, name: 'Notes' },
+  // Added in version 3.
+  { id: 'tasks', folder: null, type: 7, name: 'Tasks' },
 ] as const;
-/** Folder hierarchy versions: v1 = mail folders, v2 = + calendar/contacts/notes. */
-const HIERARCHY_VERSION = 2;
-const FOLDERS_SINCE: Record<string, number> = { calendar: 2, contacts: 2, notes: 2 };
-const PIM: Record<string, PimKind> = { calendar: 'calendar', contacts: 'contacts', notes: 'notes' };
-const CLASS_OF: Record<PimKind, string> = { calendar: 'Calendar', contacts: 'Contacts', notes: 'Notes' };
+/** Folder hierarchy versions: v1 = mail folders, v2 = + calendar/contacts/notes, v3 = + tasks. */
+const HIERARCHY_VERSION = 3;
+const FOLDERS_SINCE: Record<string, number> = { calendar: 2, contacts: 2, notes: 2, tasks: 3 };
+const PIM: Record<string, PimKind> = { calendar: 'calendar', contacts: 'contacts', notes: 'notes', tasks: 'tasks' };
+const CLASS_OF: Record<PimKind, string> = { calendar: 'Calendar', contacts: 'Contacts', notes: 'Notes', tasks: 'Tasks' };
 const folderById = (id: string | undefined) => FOLDERS.find((f) => f.id === id);
 const idOfFolder = (folder: string) => FOLDERS.find((f) => f.folder === folder)?.id ?? 'inbox';
 
@@ -479,6 +481,7 @@ async function pimProps(ctx: Ctx, kind: PimKind, id: string, opts: CollOptions):
   try {
     if (kind === 'calendar') return eventProps(await getEvent(ctx.env.DB, owner, id), opts.prefs);
     if (kind === 'contacts') return contactProps(await getContact(ctx.env.DB, owner, id), opts.prefs);
+    if (kind === 'tasks') return taskProps(await getTask(ctx.env.DB, owner, id), opts.prefs);
     return noteProps(await getNote(ctx.env.DB, owner, id), opts.prefs);
   } catch { return null; }
 }
@@ -493,6 +496,11 @@ async function pimSave(ctx: Ctx, kind: PimKind, app: WNode | undefined, id?: str
   if (kind === 'contacts') {
     const prev = id ? await getContact(db, owner, id) : undefined;
     const r = await saveContact(db, owner, contactFromApp(app, prev), id);
+    return { id: r.id, version: r.version };
+  }
+  if (kind === 'tasks') {
+    const prev = id ? await getTask(db, owner, id) : undefined;
+    const r = await saveTask(db, owner, taskFromApp(app, prev), id);
     return { id: r.id, version: r.version };
   }
   const prev = id ? await getNote(db, owner, id) : undefined;

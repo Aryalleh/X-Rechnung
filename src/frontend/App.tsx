@@ -19,6 +19,7 @@ import { Mail } from './pages/Mail';
 import { Calendar } from './pages/Calendar';
 import { Contacts } from './pages/Contacts';
 import { Notes } from './pages/Notes';
+import { Tasks } from './pages/Tasks';
 import { Settings } from './pages/Settings';
 import { Login } from './pages/Login';
 import { Contracts } from './pages/Contracts';
@@ -115,10 +116,11 @@ const NAV: { to: string; key: MsgKey; icon: IconName }[] = [
   { to: '/mail', key: 'nav.mail', icon: 'mail' },
   { to: '/calendar', key: 'nav.calendar', icon: 'calendar' },
   { to: '/contacts', key: 'nav.contacts', icon: 'contact' },
+  { to: '/tasks', key: 'nav.tasks', icon: 'checklist' },
   { to: '/notes', key: 'nav.notes', icon: 'note' },
 ];
 /** What email-only users see. */
-const MAIL_NAV = ['/mail', '/calendar', '/contacts', '/notes'];
+const MAIL_NAV = ['/mail', '/calendar', '/contacts', '/tasks', '/notes'];
 const NAV_CONFIG: { to: string; key: MsgKey; icon: IconName; end?: boolean }[] = [
   { to: '/settings/users', key: 'nav.team', icon: 'user' },
   { to: '/settings', key: 'nav.settings', icon: 'settings' },
@@ -246,6 +248,7 @@ function Shell({ appName, me, onLogout }: { appName: string; me: Me; onLogout: (
               <Route path="/calendar" element={<Calendar />} />
               <Route path="/contacts" element={<Contacts />} />
               <Route path="/contacts/:id" element={<Contacts />} />
+              <Route path="/tasks" element={<Tasks />} />
               <Route path="/notes" element={<Notes />} />
               <Route path="/notes/:id" element={<Notes />} />
               <Route path="*" element={<Navigate to="/mail" replace />} />
@@ -264,7 +267,8 @@ function Shell({ appName, me, onLogout }: { appName: string; me: Me; onLogout: (
             <Route path="/calendar" element={<Calendar />} />
             <Route path="/contacts" element={<Contacts />} />
             <Route path="/contacts/:id" element={<Contacts />} />
-            <Route path="/notes" element={<Notes />} />
+            <Route path="/tasks" element={<Tasks />} />
+              <Route path="/notes" element={<Notes />} />
             <Route path="/notes/:id" element={<Notes />} />
             <Route path="/settings/*" element={<Settings />} />
             <Route path="*" element={<Navigate to="/" replace />} />

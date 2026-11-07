@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { decode, encode, el } from '../src/eas/wbxml';
-import { contactFromApp, contactProps, eventFromApp, eventProps, fromCompact, noteFromApp, noteProps, toCompact } from '../src/eas/pim';
+import { contactFromApp, contactProps, eventFromApp, eventProps, fromCompact, noteFromApp, noteProps, taskFromApp, taskProps, toCompact } from '../src/eas/pim';
 import { occurrences, type CalEvent } from '../src/frontend/calendar-utils';
 
-const roundTrip = (nodes: ReturnType<typeof el>[]) => decode(encode(el('AirSync:ApplicationData', nodes)));
+const roundTrip = (nodes: ReturnType<typeof el>[]) => decode(encode(el('AirSync:ApplicationData', nodes)))!;
 
 describe('PIM ⇄ ActiveSync mapping', () => {
   it('converts compact calendar times', () => {
@@ -31,6 +31,23 @@ describe('PIM ⇄ ActiveSync mapping', () => {
     expect(back.body).toBe('VIP');
     const n = { subject: 'Ideas', body: 'line 1\nline 2', categories_json: null, updated_at: '2026-11-07T10:00:00.000Z' } as never;
     expect(noteFromApp(roundTrip(noteProps(n, [{ type: 1 }]).filter(Boolean) as never))).toMatchObject({ subject: 'Ideas', body: 'line 1\nline 2' });
+  });
+});
+
+describe('tasks', () => {
+  it('round-trips a to-do with due date, priority and reminder', () => {
+    const row = {
+      subject: 'Steuer abgeben', body: 'Belege', complete: 0, completed_at: null, due_date: '2026-11-10', due_utc: '2026-11-09T23:00:00.000Z',
+      start_date: null, start_utc: null, importance: 2, reminder_at: '2026-11-10T08:00:00.000Z', sensitivity: 0, recurrence_json: null, categories_json: null,
+    } as never;
+    const app = roundTrip(taskProps(row, [{ type: 1 }]).filter(Boolean) as never);
+    expect(app.children.find((n) => n.tag === 'Tasks:DueDate')?.text).toBe('2026-11-10T00:00:00.000Z');
+    expect(taskFromApp(app)).toMatchObject({ subject: 'Steuer abgeben', body: 'Belege', complete: false, due_date: '2026-11-10', due_utc: '2026-11-09T23:00:00.000Z',
+      importance: 2, reminder_at: '2026-11-10T08:00:00.000Z' });
+  });
+  it('reads a completed task from a phone', () => {
+    const app = roundTrip([el('Tasks:Subject', 'Milch'), el('Tasks:Complete', 1), el('Tasks:DateCompleted', '2026-11-07T09:00:00.000Z'), el('Tasks:ReminderSet', 0)]);
+    expect(taskFromApp(app)).toMatchObject({ subject: 'Milch', complete: true, completed_at: '2026-11-07T09:00:00.000Z', due_date: null, reminder_at: null, importance: 1 });
   });
 });
 

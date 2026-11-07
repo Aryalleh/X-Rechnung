@@ -7,8 +7,8 @@ import { all, one, run } from '../db/client';
 import { newId } from '../lib/ids';
 import { AppError } from '../lib/errors';
 
-export type PimKind = 'calendar' | 'contacts' | 'notes';
-const TABLE: Record<PimKind, string> = { calendar: 'pim_events', contacts: 'pim_contacts', notes: 'pim_notes' };
+export type PimKind = 'calendar' | 'contacts' | 'notes' | 'tasks';
+const TABLE: Record<PimKind, string> = { calendar: 'pim_events', contacts: 'pim_contacts', notes: 'pim_notes', tasks: 'pim_tasks' };
 const NOW = `strftime('%Y-%m-%dT%H:%M:%fZ','now')`;
 
 /** ActiveSync recurrence (MS-ASDTYPE): 0 daily, 1 weekly, 2 monthly, 3 monthly nth weekday, 5 yearly, 6 yearly nth weekday. */
@@ -40,6 +40,17 @@ export interface ContactInput { data: ContactData; body?: string | null; categor
 
 export interface NoteRow { id: string; owner_id: string; subject: string; body: string; categories_json: string | null; version: number; created_at: string; updated_at: string }
 export interface NoteInput { subject: string; body: string; categories?: string[] | null }
+
+export interface TaskRow {
+  id: string; owner_id: string; subject: string; body: string | null; complete: number; completed_at: string | null;
+  due_date: string | null; due_utc: string | null; start_date: string | null; start_utc: string | null; importance: number;
+  reminder_at: string | null; sensitivity: number; recurrence_json: string | null; categories_json: string | null; version: number; created_at: string; updated_at: string;
+}
+export interface TaskInput {
+  subject: string; body?: string | null; complete?: boolean; completed_at?: string | null;
+  due_date?: string | null; due_utc?: string | null; start_date?: string | null; start_utc?: string | null;
+  importance?: number; reminder_at?: string | null; sensitivity?: number; recurrence?: unknown; categories?: string[] | null;
+}
 
 const json = (v: unknown) => (v === null || v === undefined || (Array.isArray(v) && !v.length) ? null : JSON.stringify(v));
 const iso = (s: string) => {
@@ -172,6 +183,44 @@ export async function saveNote(db: D1Database, owner: string, input: NoteInput, 
   const nid = newId('note');
   await run(db, `INSERT INTO pim_notes (id, owner_id, subject, body, categories_json) VALUES (?1,?2,?3,?4,?5)`, nid, owner, ...vals);
   return getNote(db, owner, nid);
+}
+
+// ------------------------------------------------------------------ tasks
+
+/** Open tasks first (by due date, undated last), then done ones (newest first). */
+export function listTasks(db: D1Database, owner: string): Promise<TaskRow[]> {
+  return all<TaskRow>(db, `SELECT * FROM pim_tasks WHERE owner_id = ?1
+    ORDER BY complete, CASE WHEN complete = 0 THEN coalesce(due_date, '9999') END, importance DESC, coalesce(completed_at, updated_at) DESC LIMIT 5000`, owner);
+}
+
+export async function getTask(db: D1Database, owner: string, id: string): Promise<TaskRow> {
+  const t = await one<TaskRow>(db, `SELECT * FROM pim_tasks WHERE id = ?1 AND owner_id = ?2`, id, owner);
+  if (!t) throw new AppError('NOT_FOUND');
+  return t;
+}
+
+const ymdOrNull = (v: string | null | undefined) => (v && /^\d{4}-\d{2}-\d{2}/.test(v) ? v.slice(0, 10) : null);
+const isoOrNull = (v: string | null | undefined) => (v ? iso(v) : null);
+
+export async function saveTask(db: D1Database, owner: string, input: TaskInput, id?: string): Promise<TaskRow> {
+  const complete = input.complete ? 1 : 0;
+  const due = ymdOrNull(input.due_date); const start = ymdOrNull(input.start_date);
+  const vals = [
+    (input.subject.trim() || (input.body ?? '').trim().split('\n')[0] || '').slice(0, 500), input.body?.slice(0, 50_000) || null, complete,
+    complete ? isoOrNull(input.completed_at) ?? new Date().toISOString() : null,
+    due, due ? isoOrNull(input.due_utc) ?? `${due}T00:00:00.000Z` : null, start, start ? isoOrNull(input.start_utc) ?? `${start}T00:00:00.000Z` : null,
+    Math.min(2, Math.max(0, input.importance ?? 1)), isoOrNull(input.reminder_at), input.sensitivity ?? 0, json(input.recurrence), json(input.categories),
+  ];
+  const cols = 'subject=?3, body=?4, complete=?5, completed_at=?6, due_date=?7, due_utc=?8, start_date=?9, start_utc=?10, importance=?11, reminder_at=?12, sensitivity=?13, recurrence_json=?14, categories_json=?15';
+  if (id) {
+    const r = await db.prepare(`UPDATE pim_tasks SET ${cols}, version=version+1, updated_at=${NOW} WHERE id=?1 AND owner_id=?2`).bind(id, owner, ...vals).run();
+    if (!r.meta.changes) throw new AppError('NOT_FOUND');
+    return getTask(db, owner, id);
+  }
+  const tid = newId('task');
+  await run(db, `INSERT INTO pim_tasks (id, owner_id, subject, body, complete, completed_at, due_date, due_utc, start_date, start_utc, importance, reminder_at, sensitivity, recurrence_json, categories_json)
+    VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)`, tid, owner, ...vals);
+  return getTask(db, owner, tid);
 }
 
 /** Address suggestions for composing mail: own contacts, plus customers for business users. */

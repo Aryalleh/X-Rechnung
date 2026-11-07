@@ -1,6 +1,6 @@
 /** ActiveSync ⇄ database mapping for calendar, contacts and notes. */
 import { child, el, kids, textOf, type WNode } from './wbxml';
-import type { Attendee, ContactRow, EventInput, EventRow, NoteRow, Recurrence } from '../services/pim-service';
+import type { Attendee, ContactRow, EventInput, EventRow, NoteRow, Recurrence, TaskInput, TaskRow } from '../services/pim-service';
 
 /** TIME_ZONE_INFORMATION for UTC (172 zero bytes): times are sent in UTC and phones convert. */
 export const UTC_TZ = btoa('\0'.repeat(172));
@@ -163,5 +163,57 @@ export function noteFromApp(app: WNode | undefined, prev?: NoteRow): { subject: 
     subject: textOf(app, 'Notes:Subject') ?? prev?.subject ?? '',
     body: bodyIn(app, 'Notes:Body') ?? prev?.body ?? '',
     categories: categoriesIn(app, 'Notes') ?? null,
+  };
+}
+
+// ------------------------------------------------------------------ tasks
+
+/** Task dates use the long ISO form. DueDate/StartDate are the user's local date written as if UTC. */
+const longIso = (v: string) => new Date(v).toISOString();
+const localMidnight = (ymd: string) => `${ymd}T00:00:00.000Z`;
+const TASK_REC = ['Type', 'Start', 'Until', 'Occurrences', 'Interval', 'DayOfMonth', 'DayOfWeek', 'WeekOfMonth', 'MonthOfYear', 'Regenerate', 'DeadOccur'] as const;
+
+export function taskProps(t: TaskRow, prefs: BodyPref[]): (WNode | null)[] {
+  const rec = t.recurrence_json ? (JSON.parse(t.recurrence_json) as Record<string, string>) : null;
+  return [
+    bodyNode(t.body, prefs),
+    el('Tasks:Complete', t.complete ? 1 : 0),
+    t.complete && t.completed_at ? el('Tasks:DateCompleted', longIso(t.completed_at)) : null,
+    t.due_date ? el('Tasks:DueDate', localMidnight(t.due_date)) : null,
+    t.due_date ? el('Tasks:UtcDueDate', longIso(t.due_utc ?? localMidnight(t.due_date))) : null,
+    el('Tasks:Importance', t.importance),
+    rec ? el('Tasks:Recurrence', TASK_REC.filter((k) => rec[k] !== undefined).map((k) => el(`Tasks:${k}`, rec[k]!))) : null,
+    el('Tasks:ReminderSet', t.reminder_at ? 1 : 0),
+    t.reminder_at ? el('Tasks:ReminderTime', longIso(t.reminder_at)) : null,
+    el('Tasks:Sensitivity', t.sensitivity),
+    t.start_date ? el('Tasks:StartDate', localMidnight(t.start_date)) : null,
+    t.start_date ? el('Tasks:UtcStartDate', longIso(t.start_utc ?? localMidnight(t.start_date))) : null,
+    el('Tasks:Subject', t.subject),
+    categoriesOut(t.categories_json, 'Tasks'),
+  ];
+}
+
+export function taskFromApp(app: WNode | undefined, prev?: TaskRow): TaskInput {
+  const v = (tag: string) => { const x = textOf(app, `Tasks:${tag}`); return x === undefined || x === '' ? undefined : x; };
+  const date = (local?: string, utc?: string) => {
+    const l = fromCompact(local); const u = fromCompact(utc);
+    return { d: l ? l.slice(0, 10) : u ? u.slice(0, 10) : null, u: u ?? l ?? null };
+  };
+  const due = date(v('DueDate'), v('UtcDueDate'));
+  const start = date(v('StartDate'), v('UtcStartDate'));
+  const recNode = child(app, 'Tasks:Recurrence');
+  const recurrence = recNode ? Object.fromEntries(recNode.children.filter((n) => n.text).map((n) => [n.tag.slice(6), n.text!])) : null;
+  const body = bodyIn(app, 'Tasks:Body');
+  return {
+    subject: v('Subject') ?? '',
+    body: body ?? prev?.body ?? null,
+    complete: v('Complete') === '1',
+    completed_at: fromCompact(v('DateCompleted')) ?? null,
+    due_date: due.d, due_utc: due.u, start_date: start.d, start_utc: start.u,
+    importance: v('Importance') !== undefined ? Number(v('Importance')) : 1,
+    reminder_at: v('ReminderSet') === '1' ? fromCompact(v('ReminderTime')) ?? null : null,
+    sensitivity: v('Sensitivity') !== undefined ? Number(v('Sensitivity')) : 0,
+    recurrence,
+    categories: categoriesIn(app, 'Tasks') ?? null,
   };
 }
