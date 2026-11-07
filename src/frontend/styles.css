@@ -136,6 +136,17 @@ html[dir='rtl'] .flip-rtl {
   .btn-icon {
     @apply px-0;
   }
+  /* Disabled buttons: no translucency (white-on-faded-indigo was unreadable in dark mode).
+     A neutral, still-legible look in both themes instead. */
+  .btn:disabled, .btn-primary:disabled, .btn-secondary:disabled, .btn-ghost:disabled, .btn-danger:disabled {
+    @apply opacity-100 text-muted shadow-none;
+  }
+  .btn-primary:disabled, .btn-secondary:disabled, .btn-danger:disabled {
+    @apply border border-line bg-surface-2 hover:bg-surface-2;
+  }
+  .btn-ghost:disabled {
+    @apply bg-transparent hover:bg-transparent hover:text-muted;
+  }
 
   .input {
     @apply h-10 w-full rounded-lg border border-line bg-surface-2 px-3 text-sm text-fg outline-none transition-colors placeholder:text-muted/70 hover:border-line-strong focus:border-primary focus:bg-surface focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-70 max-sm:h-11 max-sm:text-base;

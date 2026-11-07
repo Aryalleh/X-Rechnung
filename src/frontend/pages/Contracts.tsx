@@ -398,7 +398,7 @@ function ContractEditor({ existing }: { existing?: Contract }) {
                 </div>
                 <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-on-primary"><Icon name="check" className="h-3.5 w-3.5" /></span>
               </div>
-              <div className="flex items-center gap-4 rounded-xl border border-line p-4 opacity-50" aria-disabled="true">
+              <div className="flex items-center gap-4 rounded-xl border border-dashed border-line bg-surface-2/40 p-4" aria-disabled="true">
                 <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface-2 text-lg font-semibold text-muted">{i18n.num(2)}</span>
                 <div>
                   <div className="font-semibold text-muted">{t('ctr.owner_first')}</div>

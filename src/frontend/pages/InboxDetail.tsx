@@ -294,7 +294,7 @@ function highlightXml(src: string): ReactNode[] {
   let last = 0, k = 0, m: RegExpExecArray | null;
   while ((m = re.exec(src))) {
     if (m.index > last) out.push(<span key={k++} className="text-slate-100">{src.slice(last, m.index)}</span>);
-    if (m[5]) out.push(<span key={k++} className="text-slate-500">{m[5]}</span>);
+    if (m[5]) out.push(<span key={k++} className="text-slate-400">{m[5]}</span>);
     else {
       out.push(<span key={k++} className="text-sky-400">{m[1]}{m[2]}</span>);
       for (const a of m[3]!.matchAll(/(\s+)([\w:.-]+)(=)("[^"]*")/g)) {
