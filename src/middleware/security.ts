@@ -14,16 +14,21 @@ export const securityHeaders: MiddlewareHandler<HonoEnv> = async (c, next) => {
   // we can set security headers without "Can't modify immutable headers".
   c.res = new Response(c.res.body, c.res);
   const h = c.res.headers;
+  // The invoice HTML preview is embedded by the SPA's "live preview" panel: allow same-origin framing for it only.
+  // Mail HTML bodies bring their own (stricter) sandbox policy.
+  const mailCsp = h.get('X-Mail-Csp');
+  h.delete('X-Mail-Csp');
+  const framable = !!mailCsp || /^\/api\/invoices\/[^/]+\/preview$/.test(c.req.path);
   h.set(
     'Content-Security-Policy',
-    [
+    mailCsp ?? [
       "default-src 'self'",
       "script-src 'self'",
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob:",
       "font-src 'self'",
       "connect-src 'self'",
-      "frame-ancestors 'none'",
+      framable ? "frame-ancestors 'self'" : "frame-ancestors 'none'",
       "base-uri 'self'",
       "form-action 'self'",
       "object-src 'none'",
@@ -32,7 +37,7 @@ export const securityHeaders: MiddlewareHandler<HonoEnv> = async (c, next) => {
   h.set('X-Content-Type-Options', 'nosniff');
   h.set('Referrer-Policy', 'strict-origin-when-cross-origin');
   h.set('Permissions-Policy', 'geolocation=(), microphone=(), camera=(), payment=()');
-  h.set('X-Frame-Options', 'DENY');
+  h.set('X-Frame-Options', framable ? 'SAMEORIGIN' : 'DENY');
   if (c.env.ENVIRONMENT === 'production') {
     h.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   }

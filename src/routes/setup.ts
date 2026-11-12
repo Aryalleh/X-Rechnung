@@ -5,6 +5,7 @@
  * setup-claim cookie that the remaining steps require. Nothing is hardcoded — the owner, domain, Access app and email
  * routing are all created here from operator input.
  */
+import { assertPasswordPolicy, createSession, revokeSessions, setPassword } from '../services/auth-service';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
@@ -46,6 +47,7 @@ setupRoutes.post('/owner', async (c) => {
       recovery_email: 'recovery_email_same_as_owner',
     });
   }
+  assertPasswordPolicy(body.owner_password, body.owner_email);
   const alreadyMine = await verifySetupClaim(c.env.DB, getCookie(c, CLAIM_COOKIE));
   if (!alreadyMine) {
     if ((await countActiveOwners(c.env.DB)) > 0) throw new AppError('CONFLICT', 'owner already exists');
@@ -84,6 +86,10 @@ setupRoutes.post('/owner', async (c) => {
     await setSetting(c.env.DB, 'LOCALIZATION', 'currency', 'EUR', { updatedBy: body.owner_email });
     await setSetting(c.env.DB, 'LOCALIZATION', 'country', 'DE', { updatedBy: body.owner_email });
   }
+  // Owner password + immediate login, so the app is never reachable without one.
+  await setPassword(c.env.DB, owner.id, body.owner_password);
+  await revokeSessions(c.env.DB, owner.id);
+  await createSession(c, owner);
   await audit(c.env.DB, { entityType: 'admin_user', entityId: owner.id, eventType: 'OWNER_CREATED', actorEmail: body.owner_email });
   return ok(c, { ownerId: owner.id, email: owner.email });
 });

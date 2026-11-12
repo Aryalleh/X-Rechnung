@@ -14,6 +14,9 @@ import { setupGate } from './middleware/setup-gate';
 import { requireAccess } from './middleware/access';
 
 import { setupRoutes } from './routes/setup';
+import { authRoutes } from './routes/auth';
+import { publicSignRoutes } from './routes/public-sign';
+import { contractRoutes, contractTemplateRoutes } from './routes/contracts';
 import { systemRoutes } from './routes/system';
 import { settingsRoutes } from './routes/settings';
 import { customerRoutes } from './routes/customers';
@@ -25,6 +28,9 @@ import { documentRoutes } from './routes/documents';
 import { exportRoutes } from './routes/export';
 
 import { handleInboundEmail } from './email/inbound';
+import { mailRoutes } from './routes/mail';
+import { easRoutes } from './eas/activesync';
+import { pimRoutes } from './routes/pim';
 import { handleQueue } from './queue/consumer';
 import { handleScheduled } from './cron';
 
@@ -37,16 +43,27 @@ app.use('*', async (c, next) => {
 });
 app.use('*', securityHeaders);
 
+// Exchange ActiveSync + Autodiscover for phone mail apps (own Basic auth, no CSRF: not a browser API).
+app.route('/', easRoutes);
+
 // API pipeline.
 app.use('/api/*', setupGate);
 app.use('/api/*', csrfProtection);
 
-// Public (pre-auth) endpoints: setup + bootstrap status.
+// Public (pre-auth) endpoints: setup, login, bootstrap status.
 app.route('/api/setup', setupRoutes);
+app.route('/api/auth', authRoutes); // /login + /logout public; /me + /password check auth inside
+app.route('/api/public/sign', publicSignRoutes); // contract signing by private link token
 app.route('/api/system', systemRoutes); // /bootstrap is public; rest behind access inside
 
-// Everything else requires Cloudflare Access.
+// Everything else requires a password session or Cloudflare Access.
 app.use('/api/*', requireAccess);
+// READ_ONLY users may look but never change anything (own password lives under /api/auth, mounted above).
+app.use('/api/*', async (c, next) => {
+  // (Their own calendar, contacts and notes are personal data and stay editable.)
+  if (c.get('actor')?.role === 'READ_ONLY' && !c.req.path.startsWith('/api/pim/') && !['GET', 'HEAD', 'OPTIONS'].includes(c.req.method.toUpperCase())) throw new AppError('FORBIDDEN');
+  await next();
+});
 app.route('/api/settings', settingsRoutes);
 app.route('/api/customers', customerRoutes);
 app.route('/api/templates', templateRoutes);
@@ -55,6 +72,10 @@ app.route('/api/payments', paymentRoutes);
 app.route('/api/received', receivedRoutes);
 app.route('/api/documents', documentRoutes);
 app.route('/api/export', exportRoutes);
+app.route('/api/contracts', contractRoutes);
+app.route('/api/contract-templates', contractTemplateRoutes);
+app.route('/api/mail', mailRoutes);
+app.route('/api/pim', pimRoutes);
 
 // Centralized error handler → standardized envelope.
 app.onError((err, c) => fail(c, err, c.env.ENVIRONMENT));

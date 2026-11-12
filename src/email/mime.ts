@@ -34,6 +34,11 @@ function indexOfSequence(haystack: Uint8Array, needle: Uint8Array, from: number)
   return -1;
 }
 
+/** Headers are ASCII, but SMTPUTF8 mail carries raw UTF-8: prefer that, fall back to latin1. */
+function decodeHeaderBytes(b: Uint8Array): string {
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(b); } catch { return decoder.decode(b); }
+}
+
 function splitHeaderBody(bytes: Uint8Array): { header: string; bodyStart: number } {
   const sep = new TextEncoder().encode('\r\n\r\n');
   let idx = indexOfSequence(bytes, sep, 0);
@@ -43,8 +48,8 @@ function splitHeaderBody(bytes: Uint8Array): { header: string; bodyStart: number
     idx = indexOfSequence(bytes, sep2, 0);
     sepLen = 2;
   }
-  if (idx === -1) return { header: decoder.decode(bytes), bodyStart: bytes.length };
-  return { header: decoder.decode(bytes.subarray(0, idx)), bodyStart: idx + sepLen };
+  if (idx === -1) return { header: decodeHeaderBytes(bytes), bodyStart: bytes.length };
+  return { header: decodeHeaderBytes(bytes.subarray(0, idx)), bodyStart: idx + sepLen };
 }
 
 function parseHeaders(headerText: string): Record<string, string> {
@@ -115,8 +120,11 @@ function parsePart(bytes: Uint8Array): MimePart[] {
       if (body[start] === 0x0d) start++;
       if (body[start] === 0x0a) start++;
       const next = indexOfSequence(body, delimiter, start);
-      const end = next === -1 ? body.length : next;
-      const sub = body.subarray(start, end);
+      let end = next === -1 ? body.length : next;
+      // The CRLF before a boundary belongs to the delimiter, not the part.
+      if (next !== -1 && body[end - 1] === 0x0a) end--;
+      if (next !== -1 && body[end - 1] === 0x0d) end--;
+      const sub = body.subarray(start, Math.max(start, end));
       parts.push(...parsePart(sub));
       pos = next;
     }
@@ -148,7 +156,7 @@ export function parseEmail(raw: Uint8Array): ParsedEmail {
 }
 
 /** Decode RFC 2047 encoded-words in a header (basic UTF-8 B/Q support). */
-function decodeMimeWord(value: string | null): string | null {
+export function decodeMimeWord(value: string | null): string | null {
   if (!value) return value;
   return value.replace(/=\?([^?]+)\?([bBqQ])\?([^?]*)\?=/g, (_m, _charset, enc, data) => {
     try {
@@ -160,4 +168,52 @@ function decodeMimeWord(value: string | null): string | null {
       return data;
     }
   });
+}
+
+/** Split "Name <addr@x>" (or a bare address) into parts; the display name is RFC 2047-decoded. */
+export function parseAddress(value: string | null): { name: string | null; email: string | null } {
+  if (!value) return { name: null, email: null };
+  const v = decodeMimeWord(value.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/)[0]!.trim()) ?? '';
+  const m = /^(.*?)<([^>]+)>\s*$/.exec(v);
+  if (m) return { name: m[1]!.trim().replace(/^"|"$/g, '') || null, email: m[2]!.trim().toLowerCase() };
+  return { name: null, email: v.trim().toLowerCase() || null };
+}
+
+function decodeText(part: MimePart): string {
+  const charset = getParam(part.headers['content-type'] ?? '', 'charset') ?? 'utf-8';
+  try { return new TextDecoder(charset.toLowerCase()).decode(part.body); } catch { return new TextDecoder('utf-8').decode(part.body); }
+}
+
+export interface MailBodies {
+  text: string | null;
+  html: string | null;
+  attachments: (MimePart & { contentId: string | null })[];
+}
+
+/** Pick the readable bodies (first text/plain and text/html without a filename) and the attachments. */
+export function bodiesOf(parsed: ParsedEmail): MailBodies {
+  let text: string | null = null;
+  let html: string | null = null;
+  const attachments: MailBodies['attachments'] = [];
+  for (const p of parsed.parts) {
+    const isAttachment = !!p.filename || p.disposition === 'attachment';
+    if (!isAttachment && p.contentType === 'text/plain' && text === null) { text = decodeText(p); continue; }
+    if (!isAttachment && p.contentType === 'text/html' && html === null) { html = decodeText(p); continue; }
+    if (p.body.byteLength === 0) continue;
+    const cid = (p.headers['content-id'] ?? '').replace(/^<|>$/g, '').trim() || null;
+    if (!isAttachment && !cid && p.contentType.startsWith('text/')) continue;
+    attachments.push({ ...p, filename: p.filename ? decodeMimeWord(p.filename) : null, contentId: cid });
+  }
+  return { text, html, attachments };
+}
+
+/** Plain-text fallback from HTML (for snippets and replies). Never rendered as HTML. */
+export function htmlToText(html: string): string {
+  return html
+    .replace(/<(style|script|head)[\s\S]*?<\/\1>/gi, '')
+    .replace(/<br\s*\/?>(?!\n)/gi, '\n')
+    .replace(/<\/(p|div|tr|li|h[1-6])>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 }

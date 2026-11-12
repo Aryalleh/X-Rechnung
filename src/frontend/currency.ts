@@ -97,3 +97,24 @@ export function normalizeQty(input: string): string {
     .replace(/[٫,]/g, '.')
     .replace(/[^\d.]/g, '');
 }
+
+/** Market a currency belongs to: German (EUR) or Iranian (rial/toman). */
+export function marketOf(code: string | null | undefined): 'DE' | 'IR' {
+  return code === 'IRR' || code === 'IRT' || code === 'IRT_NEW' ? 'IR' : 'DE';
+}
+
+/** Old rial per minor unit: IRR 1, IRT (toman) 10, IRT_NEW 1 قران = 100 rial (10 000 rial per new unit). */
+const RIAL_PER_MINOR: Record<string, number> = { IRR: 1, IRT: 10, IRT_NEW: 100 };
+
+/**
+ * Convert a template price into the invoice currency. Only rial ↔ toman ↔ new
+ * unit are converted (fixed legal ratios); EUR is never converted — German and
+ * Iranian templates are kept apart instead.
+ */
+export function convertPrice(minor: number, from: string, to: string): number {
+  if (from === to) return minor;
+  const a = RIAL_PER_MINOR[from];
+  const b = RIAL_PER_MINOR[to];
+  if (!a || !b) return minor;
+  return Math.round((minor * a) / b);
+}

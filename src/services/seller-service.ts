@@ -1,6 +1,6 @@
 import { assertIranSellerIssuable, cleanIranIds, isIranCurrency } from './iran-tax';
 import type { z } from 'zod';
-import { sellerProfileSchema, isValidIban } from '../lib/schemas';
+import { sellerProfileSchema, isValidIban, isValidShaba } from '../lib/schemas';
 import {
   createSellerVersion, getActiveSeller, type SellerProfile, type SellerInput,
 } from '../db/repositories/seller-repo';
@@ -17,7 +17,8 @@ export async function saveSellerProfile(
   logoKey?: string | null,
   signatureKey?: string | null,
 ): Promise<SellerProfile> {
-  if (!isValidIban(body.iban)) throw new AppError('VALIDATION_ERROR', 'IBAN checksum invalid', { iban: 'invalid_iban' });
+  if (body.iban && !isValidIban(body.iban)) throw new AppError('VALIDATION_ERROR', 'IBAN checksum invalid', { iban: 'invalid_iban' });
+  if (body.shaba && !isValidShaba(body.shaba)) throw new AppError('VALIDATION_ERROR', 'Sheba checksum invalid', { shaba: 'invalid_shaba' });
 
   const input: SellerInput = {
     full_name: body.full_name,
@@ -33,8 +34,9 @@ export async function saveSellerProfile(
     steuernummer: body.steuernummer ?? null,
     ust_idnr: body.ust_idnr ?? null,
     kleinunternehmer_id: body.kleinunternehmer_id ?? null,
-    account_holder: body.account_holder,
-    iban: body.iban,
+    // DB columns are NOT NULL (pre-Sheba schema): store '' when only a Sheba is given.
+    account_holder: body.account_holder?.trim() || '',
+    iban: body.iban || '',
     bic: body.bic || null,
     bank_name: body.bank_name ?? null,
     logo_r2_key: logoKey ?? null,
@@ -48,6 +50,10 @@ export async function saveSellerProfile(
     ...cleanIranIds(body),
     tax_memory_id: body.tax_memory_id?.trim() || null,
     iran_vat_rate_bp: body.iran_vat_rate_bp,
+    iran_account_holder: body.iran_account_holder?.trim() || null,
+    iran_bank_name: body.iran_bank_name?.trim() || null,
+    shaba: body.shaba || null,
+    iran_card_number: body.iran_card_number || null,
   };
   if (input.iran_tax_status === 'VAT_REGISTERED' && !input.economic_code) {
     throw new AppError('VALIDATION_ERROR', 'economic code required', { economic_code: 'iran_economic_code_required' });
@@ -111,5 +117,9 @@ export function snapshotSeller(s: SellerProfile): Record<string, unknown> {
     national_id: s.national_id,
     economic_code: s.economic_code,
     tax_memory_id: s.tax_memory_id,
+    iran_account_holder: s.iran_account_holder,
+    iran_bank_name: s.iran_bank_name,
+    shaba: s.shaba,
+    iran_card_number: s.iran_card_number,
   };
 }

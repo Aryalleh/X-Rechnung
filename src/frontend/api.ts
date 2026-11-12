@@ -20,6 +20,8 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   }
   const res = await fetch(`/api${path}`, { method, headers, body: payload });
   const json = (await res.json().catch(() => ({ ok: false, error: { code: 'NETWORK', message: '' } }))) as ApiEnvelope<T>;
+  // Session expired / signed out elsewhere → let the app show the login screen.
+  if (res.status === 401 && !path.startsWith('/auth/login')) window.dispatchEvent(new Event('xr:unauthorized'));
   if (!json.ok) {
     const err = new Error(json.error?.message ?? '');
     (err as Error & { code?: string; fields?: unknown }).code = json.error?.code;
@@ -34,5 +36,6 @@ export const api = {
   post: <T>(path: string, body?: unknown) => request<T>('POST', path, body),
   put: <T>(path: string, body?: unknown) => request<T>('PUT', path, body),
   del: <T>(path: string) => request<T>('DELETE', path),
+  patch: <T>(path: string, body?: unknown) => request<T>('PATCH', path, body),
   raw: (path: string) => fetch(`/api${path}`, { headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-UI-Lang': getCurrentLang() } }),
 };

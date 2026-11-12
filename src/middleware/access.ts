@@ -1,5 +1,5 @@
 /**
- * Cloudflare Access JWT verification.
+ * Authentication: password sessions (default) + Cloudflare Access JWT verification.
  *
  * We do NOT trust the presence of the header. We verify the RS256 signature
  * against the team's JWKS, check `aud` (ACCESS_AUD) and `iss` (team domain),
@@ -12,6 +12,7 @@ import { AppError } from '../lib/errors';
 import { base64ToBytes, toArrayBuffer } from '../lib/crypto';
 import { getAccessConfig } from '../services/settings-service';
 import { findAdminByEmail } from '../db/repositories/admin-repo';
+import { sessionActor } from '../services/auth-service';
 
 interface Jwk {
   kid: string;
@@ -106,42 +107,56 @@ function extractToken(req: Request): string | null {
   return m ? decodeURIComponent(m[1]!) : null;
 }
 
+/** Local development only: requests that really come from this machine. */
+function isLocalhost(url: string): boolean {
+  const h = new URL(url).hostname;
+  return h === 'localhost' || h === '127.0.0.1' || h === '[::1]';
+}
+
 /**
- * Middleware enforcing Access. When Access is not yet configured (fresh setup)
- * this middleware is bypassed by the setup gate so the operator is never locked
- * out. Routes still behind Access require a verified, known admin.
+ * Authentication for all private API routes, in order:
+ *   1. password session cookie (xr_session) — the default login;
+ *   2. Cloudflare Access JWT — when Access is configured;
+ *   3. dev bypass — ONLY on localhost and never in production.
+ * Anything else → 401, so a deployment without Access is never open.
  */
 export const requireAccess: MiddlewareHandler<HonoEnv> = async (c, next) => {
-  const access = await getAccessConfig(c.env.DB);
-
-  // Dev escape hatch: only when ENVIRONMENT !== production AND Access unconfigured.
-  if (!access.aud || !access.teamDomain) {
-    if (c.env.ENVIRONMENT !== 'production') {
-      c.set('actor', { email: 'dev@localhost', role: 'OWNER' });
-      await next();
-      return;
-    }
-    throw new AppError('UNAUTHORIZED', 'Access not configured');
+  const session = await sessionActor(c);
+  if (session) {
+    c.set('actor', { ...session, via: 'session' });
+    mailOnlyGuard(c.get('actor')!, c.req.path);
+    await next();
+    return;
   }
 
-  const token = extractToken(c.req.raw);
-  if (!token) throw new AppError('UNAUTHORIZED', 'missing Access token');
+  const access = await getAccessConfig(c.env.DB);
+  const token = access.aud && access.teamDomain ? extractToken(c.req.raw) : null;
+  if (token && access.aud && access.teamDomain) {
+    const claims = await verifyAccessJwt(token, access.aud, access.teamDomain);
+    const email = claims.email?.toLowerCase();
+    if (!email) throw new AppError('UNAUTHORIZED', 'no email claim');
+    const admin = await findAdminByEmail(c.env.DB, email);
+    if (!admin || admin.status !== 'ACTIVE') throw new AppError('FORBIDDEN', 'not an active admin');
+    c.set('actor', { email, role: admin.mail_only ? 'MAIL_USER' : admin.role, mailAddress: admin.mail_address, userId: admin.id, via: 'access', ...(claims.sub ? { identityId: claims.sub } : {}) });
+    mailOnlyGuard(c.get('actor')!, c.req.path);
+    await next();
+    return;
+  }
 
-  const claims = await verifyAccessJwt(token, access.aud, access.teamDomain);
-  const email = claims.email?.toLowerCase();
-  if (!email) throw new AppError('UNAUTHORIZED', 'no email claim');
-
-  const admin = await findAdminByEmail(c.env.DB, email);
-  if (!admin || admin.status !== 'ACTIVE') throw new AppError('FORBIDDEN', 'not an active admin');
-
-  const actor: Actor = {
-    email,
-    role: admin.role,
-    ...(claims.sub ? { identityId: claims.sub } : {}),
-  };
-  c.set('actor', actor);
-  await next();
+  if (c.env.ENVIRONMENT !== 'production' && isLocalhost(c.req.url)) {
+    c.set('actor', { email: 'dev@localhost', role: 'OWNER', via: 'dev' });
+    await next();
+    return;
+  }
+  throw new AppError('UNAUTHORIZED', 'login required');
 };
+
+/** Email-only users may use the mailbox and their own account endpoints — nothing else. */
+function mailOnlyGuard(actor: Actor, path: string): void {
+  if (actor.role !== 'MAIL_USER') return;
+  if (path === '/api/mail' || path.startsWith('/api/mail/') || path.startsWith('/api/pim/') || path.startsWith('/api/auth/')) return;
+  throw new AppError('FORBIDDEN', 'mailbox-only account');
+}
 
 /** Restrict a route to specific roles. */
 export function requireRole(...roles: Actor['role'][]): MiddlewareHandler<HonoEnv> {

@@ -1,4 +1,5 @@
-import { iranTaxNote, iranTreatment, isIranCurrency } from '../services/iran-tax';
+import { buildTaxNote } from '../services/tax-note';
+import { iranTreatment, isIranCurrency } from '../services/iran-tax';
 import { Hono } from 'hono';
 import type { HonoEnv } from '../http-types';
 import { z } from 'zod';
@@ -28,7 +29,8 @@ export const invoiceRoutes = new Hono<HonoEnv>();
 
 invoiceRoutes.get('/', async (c) => {
   const status = c.req.query('status');
-  return ok(c, await listInvoices(c.env.DB, status ? { status } : {}));
+  const limit = Math.min(Math.max(Number(c.req.query('limit') ?? '100') || 100, 1), 2000);
+  return ok(c, await listInvoices(c.env.DB, status ? { status, limit } : { limit }));
 });
 
 invoiceRoutes.get('/:id', async (c) => {
@@ -96,6 +98,7 @@ invoiceRoutes.get('/:id/preview', async (c) => {
     projectName: invoice.project_name,
     buyerReference: invoice.buyer_reference,
     orderReference: invoice.order_reference ?? invoice.purchase_order_reference,
+      contractReference: invoice.contract_reference ?? null,
     items: items.map((it) => ({
       position: it.position, description: it.description, quantity: it.quantity_decimal, unit: it.unit,
       unitPriceCents: it.unit_price_cents, discountCents: it.discount_cents, lineTotalCents: it.line_total_cents, rightsText: it.rights_text,
@@ -109,9 +112,10 @@ invoiceRoutes.get('/:id/preview', async (c) => {
     advancePaidCents: invoice.advance_paid_cents,
     amountDueCents: invoice.amount_due_cents || invoice.total_cents,
     installments: (await getInstallments(c.env.DB, invoice.id)).map((i) => ({ label: i.label, dueDate: i.due_date, amountCents: i.amount_cents, paid: i.paid === 1 })),
-    taxExemptionText: iran
-      ? [iranTaxNote(iran, lang), invoice.public_note].filter(Boolean).join('\n')
-      : lang === 'fa' ? (invoice.public_note ?? '') : (settings.tax_exemption_text || seller.tax_exemption_text),
+    taxExemptionText: buildTaxNote({
+      lang, iran, taxRateBp: iran ? iran.rateBp : invoice.tax_scenario === 'KLEINUNTERNEHMER_DE' ? 0 : invoice.tax_rate_bp,
+      germanText: settings.tax_exemption_text || seller.tax_exemption_text, publicNote: invoice.public_note,
+    }),
     paymentTermsText: settings.payment_terms_text,
     thanksText: settings.thanks_text,
     showBank: settings.show_bank,

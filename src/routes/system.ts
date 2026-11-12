@@ -2,6 +2,7 @@
 import { Hono } from 'hono';
 import type { HonoEnv } from '../http-types';
 import { ok } from '../lib/response';
+import { requireAccess } from '../middleware/access';
 import { getSetupRow } from '../services/setup-service';
 import { getIntegration } from '../db/repositories/cloudflare-repo';
 import { getActiveSeller } from '../db/repositories/seller-repo';
@@ -11,6 +12,9 @@ import { all } from '../db/client';
 import { listAudit } from '../services/audit-service';
 
 export const systemRoutes = new Hono<HonoEnv>();
+
+// Only /bootstrap is public; every other system route needs a logged-in user.
+systemRoutes.use('*', async (c, next) => (c.req.path === '/api/system/bootstrap' ? next() : requireAccess(c, next)));
 
 /** Public: minimal info the SPA needs before auth to decide setup vs app. */
 systemRoutes.get('/bootstrap', async (c) => {
@@ -62,6 +66,9 @@ systemRoutes.get('/status', async (c) => {
 });
 
 systemRoutes.get('/audit', async (c) => {
-  const limit = Number(c.req.query('limit') ?? '200');
-  return ok(c, await listAudit(c.env.DB, Math.min(limit, 1000)));
+  const limit = Number(c.req.query('limit') ?? '200') || 200;
+  return ok(c, await listAudit(c.env.DB, Math.min(Math.max(limit, 1), 1000), {
+    entityType: c.req.query('entity_type') || undefined,
+    entityId: c.req.query('entity_id') || undefined,
+  }));
 });

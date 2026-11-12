@@ -60,11 +60,13 @@ export interface AuditEvent {
   metadata_json: string | null;
 }
 
-export function listAudit(db: D1Database, limit = 200): Promise<AuditEvent[]> {
-  return all<AuditEvent>(
-    db,
-    `SELECT id, entity_type, entity_id, event_type, actor_email, created_at, metadata_json
-       FROM audit_events ORDER BY created_at DESC LIMIT ?1`,
-    limit,
-  );
+export function listAudit(db: D1Database, limit = 200, filter: { entityType?: string; entityId?: string } = {}): Promise<AuditEvent[]> {
+  const cols = `SELECT id, entity_type, entity_id, event_type, actor_email, created_at, metadata_json FROM audit_events`;
+  if (filter.entityType && filter.entityId) {
+    return all<AuditEvent>(db, `${cols} WHERE entity_type = ?2 AND entity_id = ?3 ORDER BY created_at DESC LIMIT ?1`, limit, filter.entityType, filter.entityId);
+  }
+  if (filter.entityType) {
+    return all<AuditEvent>(db, `${cols} WHERE entity_type = ?2 ORDER BY created_at DESC LIMIT ?1`, limit, filter.entityType);
+  }
+  return all<AuditEvent>(db, `${cols} ORDER BY created_at DESC LIMIT ?1`, limit);
 }

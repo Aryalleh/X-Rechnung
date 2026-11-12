@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { api } from '../api';
 import { errorText, useI18n } from '../i18n';
 import type { InstallMode, MsgKey } from '../i18n';
-import { Alert, Field, Icon, Logo, Spinner } from '../ui';
+import { Alert, Field, Icon, Logo, PasswordInput, Spinner } from '../ui';
 import { LangSwitch } from '../App';
 
 /** Multi-step setup wizard. No setup secret: the first owner submission wins. */
@@ -12,7 +12,8 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
   const [step, setStep] = useState(1);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [owner, setOwner] = useState({ owner_name: '', owner_email: '', recovery_email: '', timezone: 'Europe/Berlin', invoice_mode: 'both' as InstallMode });
+  const [pw2, setPw2] = useState('');
+  const [owner, setOwner] = useState({ owner_name: '', owner_email: '', owner_password: '', recovery_email: '', timezone: 'Europe/Berlin', invoice_mode: 'both' as InstallMode });
   const [cf, setCf] = useState({ account_id: '', zone_id: '', zone_name: '', worker_script_name: 'invoice', app_domain: '', api_token: '' });
 
   async function run(fn: () => Promise<void>) {
@@ -54,6 +55,7 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
 
           {step === 1 && (
             <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); void run(async () => {
+              if (owner.owner_password !== pw2) throw new Error(t('set.pw_mismatch'));
               await api.post('/setup/owner', { ...owner, locale: lang });
               setStep(2);
             }); }}>
@@ -63,6 +65,14 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
               <Field label={t('setup.owner_email')} htmlFor="s-email">
                 <input id="s-email" type="email" className="input" dir="ltr" required autoComplete="email" value={owner.owner_email} onChange={(e) => setOwner({ ...owner, owner_email: e.target.value })} />
               </Field>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label={t('setup.owner_password')} htmlFor="s-pw" hint={t('set.pw_hint')}>
+                  <PasswordInput id="s-pw" value={owner.owner_password} onChange={(v) => setOwner({ ...owner, owner_password: v })} autoComplete="new-password" required minLength={10} />
+                </Field>
+                <Field label={t('setup.owner_password_confirm')} htmlFor="s-pw2" error={pw2 && pw2 !== owner.owner_password ? t('set.pw_mismatch') : undefined}>
+                  <PasswordInput id="s-pw2" value={pw2} onChange={setPw2} autoComplete="new-password" required minLength={10} invalid={Boolean(pw2 && pw2 !== owner.owner_password)} />
+                </Field>
+              </div>
               <Field label={`${t('setup.recovery_email')} (${t('common.optional')})`} htmlFor="s-rec">
                 <input id="s-rec" type="email" className="input" dir="ltr" value={owner.recovery_email} onChange={(e) => setOwner({ ...owner, recovery_email: e.target.value })} />
               </Field>

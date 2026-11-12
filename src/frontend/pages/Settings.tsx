@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { NavLink, Routes, Route, Navigate } from 'react-router-dom';
+import { NavLink, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { MailServerCard } from './Mail';
 import { api } from '../api';
 import { errorText, useI18n } from '../i18n';
 import type { InstallMode, Lang, MsgKey } from '../i18n';
-import { Alert, Badge, EmptyState, Field, Icon, Loading, Options, PageHeader, Section, Spinner, useToast } from '../ui';
+import { Alert, Badge, EmptyState, Field, Icon, Loading, Modal, Options, PageHeader, PasswordInput, Section, Spinner, useToast } from '../ui';
 import type { IconName } from '../ui';
 
 /* Labels for generic settings keys (per language). Unknown keys are humanized. */
@@ -41,13 +42,13 @@ const NAV: { to: string; key: MsgKey; icon: IconName }[] = [
   { to: 'invoice', key: 'set.invoice', icon: 'file' },
   { to: 'general', key: 'set.general', icon: 'settings' },
   { to: 'einvoice', key: 'set.einvoice', icon: 'inbox' },
-  { to: 'users', key: 'set.users', icon: 'users' },
   { to: 'cloudflare', key: 'set.cloudflare', icon: 'globe' },
   { to: 'status', key: 'set.status', icon: 'activity' },
 ];
 
 export function Settings() {
   const { t } = useI18n();
+  if (useLocation().pathname.startsWith('/settings/users')) return <Users />;
   return (
     <div>
       <PageHeader title={t('set.title')} />
@@ -69,7 +70,6 @@ export function Settings() {
             <Route path="general" element={<GenericGroup title={t('set.general')} path="/settings/general" hide={['invoice_mode', 'currency', 'invoice_language']} />} />
             <Route path="invoice" element={<GenericGroup title={t('set.invoice')} path="/settings/invoice" />} />
             <Route path="einvoice" element={<GenericGroup title={t('set.einvoice')} path="/settings/einvoice" />} />
-            <Route path="users" element={<Users />} />
             <Route path="cloudflare" element={<GenericGroup title={t('set.cloudflare')} path="/settings/cloudflare" readOnly />} />
             <Route path="status" element={<SystemStatus />} />
             <Route path="*" element={<Navigate to="." replace />} />
@@ -85,8 +85,9 @@ const SELLER_SECTIONS: { key: MsgKey; fields: string[] }[] = [
   { key: 'set.sec_address', fields: ['street', 'postal_code', 'city', 'country', 'email', 'phone', 'website'] },
   { key: 'set.sec_tax', fields: ['steuernummer', 'ust_idnr', 'kleinunternehmer_id'] },
   { key: 'set.sec_bank', fields: ['account_holder', 'iban', 'bic', 'bank_name'] },
+  { key: 'set.sec_bank_ir', fields: ['iran_account_holder', 'iran_bank_name', 'shaba', 'iran_card_number'] },
 ];
-const SELLER_LTR = new Set(['national_id', 'economic_code', 'tax_memory_id', 'email', 'website', 'iban', 'bic', 'ust_idnr', 'steuernummer', 'phone', 'postal_code', 'country', 'kleinunternehmer_id']);
+const SELLER_LTR = new Set(['shaba', 'iran_card_number', 'national_id', 'economic_code', 'tax_memory_id', 'email', 'website', 'iban', 'bic', 'ust_idnr', 'steuernummer', 'phone', 'postal_code', 'country', 'kleinunternehmer_id']);
 
 function SellerSettings() {
   const i18n = useI18n();
@@ -235,7 +236,7 @@ function CurrencySettings() {
   );
 }
 
-function GenericGroup({ title, path, readOnly, hide = [] }: { title: string; path: string; readOnly?: boolean; hide?: string[] }) {
+function GenericGroup({ title, path, readOnly, hide = [], bare }: { title: string; path: string; readOnly?: boolean; hide?: string[]; bare?: boolean }) {
   const i18n = useI18n();
   const { t, lang } = i18n;
   const toast = useToast();
@@ -255,7 +256,7 @@ function GenericGroup({ title, path, readOnly, hide = [] }: { title: string; pat
   return (
     <form onSubmit={(e) => { e.preventDefault(); void save(); }} className="space-y-5">
       {err && <Alert tone="danger" onClose={() => setErr(null)}>{err}</Alert>}
-      <Section title={title}>
+      <Wrap bare={bare} title={title}>
         {readOnly && <p className="mb-3 text-xs text-muted">{t('set.readonly_note')}</p>}
         {entries.length === 0 ? <EmptyState icon="settings" title={t('set.empty_group')} /> : (
           <div className="grid gap-3 sm:grid-cols-2">
@@ -283,61 +284,268 @@ function GenericGroup({ title, path, readOnly, hide = [] }: { title: string; pat
             })}
           </div>
         )}
-      </Section>
+      </Wrap>
       {!readOnly && entries.length > 0 && <SaveBar busy={busy} />}
     </form>
   );
 }
 
-const ROLES = ['ADMIN', 'ACCOUNTANT', 'READ_ONLY'] as const;
+function Wrap({ bare, title, children }: { bare?: boolean; title: string; children: React.ReactNode }) {
+  return bare ? <div className="card p-6">{children}</div> : <Section title={title}>{children}</Section>;
+}
+
+const ROLES = ['ADMIN', 'ACCOUNTANT', 'READ_ONLY', 'MAIL_USER'] as const;
+/** What each role may do (mirrors requireRole() checks on the server). */
+const PERMS: Record<string, string[]> = {
+  OWNER: ['FULL_ACCESS', 'MANAGE_USERS', 'ISSUE_INVOICE', 'MANAGE_CONTRACTS', 'MAILBOX'],
+  ADMIN: ['ISSUE_INVOICE', 'MANAGE_CUSTOMERS', 'MANAGE_CONTRACTS', 'SETTINGS', 'MAILBOX'],
+  ACCOUNTANT: ['ISSUE_INVOICE', 'MANAGE_CUSTOMERS', 'READ_REPORTS', 'MAILBOX'],
+  READ_ONLY: ['READ_REPORTS', 'MAILBOX'],
+  MAIL_USER: ['MAILBOX'],
+};
+
+function SetMailbox({ row, onClose, onSaved }: { row: { id: string; email: string; mail_address: string | null }; onClose: () => void; onSaved: () => void }) {
+  const i18n = useI18n();
+  const { t } = i18n;
+  const [v, setV] = useState(row.mail_address ?? '');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  async function save() {
+    setErr(null); setBusy(true);
+    try { await api.put(`/settings/users/${row.id}/mailbox`, { mail_address: v.trim() || null }); onSaved(); }
+    catch (e) { setErr(errorText(e, i18n)); } finally { setBusy(false); }
+  }
+  return (
+    <Modal open onClose={onClose} title={`${t('team.mailbox')}: ${row.email}`}>
+      <form className="grid gap-4" onSubmit={(e) => { e.preventDefault(); void save(); }}>
+        {err && <Alert tone="danger" onClose={() => setErr(null)}>{err}</Alert>}
+        <Field label={t('team.mailbox')} htmlFor="mb-a" hint={t('team.mailbox_hint')}><input id="mb-a" type="email" className="input" dir="ltr" autoFocus value={v} onChange={(e) => setV(e.target.value)} /></Field>
+        <button className="btn-primary justify-center" disabled={busy}>{busy ? <Spinner /> : <Icon name="check" />}{t('common.save')}</button>
+      </form>
+    </Modal>
+  );
+}
 
 function Users() {
   const i18n = useI18n();
   const { t, tx, date } = i18n;
   const toast = useToast();
-  const [rows, setRows] = useState<{ id: string; email: string; role: string; status: string; last_login_at: string | null }[] | null>(null);
-  const [form, setForm] = useState({ email: '', full_name: '', role: 'ADMIN' });
+  type Row = { id: string; email: string; full_name: string | null; role: string; status: string; last_login_at: string | null; has_password: number; mail_address: string | null; mail_only: number };
+  const [rows, setRows] = useState<Row[] | null>(null);
+  const [mbFor, setMbFor] = useState<Row | null>(null);
+  const [me, setMe] = useState<{ email: string; role: string; hasPassword: boolean } | null>(null);
+  const [form, setForm] = useState({ email: '', full_name: '', role: 'ADMIN', password: '', mail_address: '' });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const load = () => api.get<NonNullable<typeof rows>>('/settings/users').then(setRows).catch(() => setRows([]));
-  useEffect(() => { void load(); }, []);
+  const [pwFor, setPwFor] = useState<Row | null>(null);
+  const [inviteOpen, setInviteOpen] = useState(false);
+  // Email-only users are stored as READ_ONLY + mail_only; show them as their own role.
+  const load = () => api.get<Row[]>('/settings/users').then((r) => setRows(r.map((x) => (x.mail_only ? { ...x, role: 'MAIL_USER' } : x)))).catch(() => setRows([]));
+  useEffect(() => { void load(); api.get<NonNullable<typeof me>>('/auth/me').then(setMe).catch(() => undefined); }, []);
+  const isOwner = me?.role === 'OWNER';
+
+  async function patch(r: Row, what: 'role' | 'status', value: string) {
+    setErr(null);
+    try { await api.put(`/settings/users/${r.id}/${what}`, { [what]: value }); toast(t('common.saved')); await load(); }
+    catch (e) { setErr(errorText(e, i18n)); }
+  }
 
   async function add() {
     setErr(null); setBusy(true);
-    try { await api.post('/settings/users', form); setForm({ email: '', full_name: '', role: 'ADMIN' }); toast(t('common.saved')); await load(); }
-    catch (e) { setErr(errorText(e, i18n)); } finally { setBusy(false); }
+    try {
+      await api.post('/settings/users', form);
+      setForm({ email: '', full_name: '', role: 'ADMIN', password: '', mail_address: '' }); toast(t('common.saved')); await load();
+    } catch (e) { setErr(errorText(e, i18n)); } finally { setBusy(false); }
   }
 
   return (
-    <div className="space-y-5">
+    <div>
+      <div className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <h1 className="text-2xl font-bold tracking-tight">{t('team.page_title')}</h1>
+        {isOwner && <button className="btn-primary" onClick={() => setInviteOpen(true)}><Icon name="plus" />{t('team.invite')}</button>}
+      </div>
       {err && <Alert tone="danger" onClose={() => setErr(null)}>{err}</Alert>}
+
+      <div className="mb-4 flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <h2 className="text-lg font-bold">{t('team.email_title')}</h2>
+          <p className="text-[13px] text-muted">{t('team.email_sub')}</p>
+        </div>
+        <NavLink to="/mail" className="btn-secondary btn-sm"><Icon name="mail" />{t('team.mail_open')}</NavLink>
+      </div>
+      <MailServerCard />
+
+      <h2 className="mb-4 mt-10 text-lg font-bold">{t('team.members_perms')}</h2>
       <section className="card overflow-hidden">
-        <div className="border-b border-line px-5 py-3"><h2 className="section-title">{t('set.users')}</h2></div>
         {!rows ? <Loading /> : (
           <div className="overflow-x-auto">
             <table className="data">
-              <thead><tr><th>{t('set.user_email')}</th><th>{t('set.user_role')}</th><th>{t('set.user_status')}</th><th className="max-sm:hidden">{t('set.user_last_login')}</th></tr></thead>
+              <thead><tr>
+                <th>{t('team.user')}</th><th>{t('team.role_email')}</th><th className="max-xl:hidden">{t('team.permissions')}</th><th>{t('set.user_status')}</th>
+                <th className="max-sm:hidden">{t('set.user_last_login')}</th>
+                <th className="text-end">{t('inv.actions')}</th>
+              </tr></thead>
               <tbody>{rows.map((r) => (
                 <tr key={r.id}>
-                  <td dir="ltr" className="text-start">{r.email}</td>
-                  <td>{tx(`role.${r.role}`, r.role)}</td>
-                  <td><Badge tone={r.status === 'ACTIVE' ? 'success' : 'neutral'}>{tx(`ustatus.${r.status}`, r.status)}</Badge></td>
+                  <td>
+                    <div className="flex items-center gap-3">
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary-soft text-sm font-semibold text-primary-fg">{(r.full_name || r.email).trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase()}</span>
+                      <div className="min-w-0">
+                        <div className="truncate font-semibold" dir="auto">{r.full_name || r.email.split('@')[0]}{me?.email === r.email && <span className="ms-1.5 text-xs font-normal text-muted">({t('team.you')})</span>}</div>
+                        <div className="text-xs italic text-muted">{tx(`role.${r.role}`, r.role)}</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td>
+                    <div className="truncate" dir="ltr">{r.email}</div>
+                    <div className={`flex items-center gap-1 text-xs font-medium ${r.has_password ? 'text-primary-fg' : 'text-warning'}`}>
+                      <Icon name={r.has_password ? 'lock' : 'alert'} className="h-3 w-3" />{t(r.has_password ? 'set.user_has_pw' : 'set.user_no_pw')}
+                    </div>
+                    <div className="mt-0.5 flex items-center gap-1 text-xs text-muted">
+                      <Icon name="mail" className="h-3 w-3" />
+                      {isOwner ? (
+                        <button className="truncate hover:text-fg hover:underline" dir="ltr" title={t('team.mailbox_set')} onClick={() => setMbFor(r)}>{r.mail_address || t('team.mailbox_none')}</button>
+                      ) : <span className="truncate" dir="ltr">{r.mail_address || t('team.mailbox_none')}</span>}
+                    </div>
+                  </td>
+                  <td className="max-xl:hidden">
+                    <div className="flex max-w-[20rem] flex-wrap gap-1">
+                      {(PERMS[r.role] ?? []).map((p) => <span key={p} className={`whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${p === 'ISSUE_INVOICE' ? 'bg-primary-soft text-primary-fg' : 'bg-surface-2 text-muted'}`} title={t(`perm.${p}` as MsgKey)}>{p}</span>)}
+                    </div>
+                  </td>
+                  <td>
+                    {isOwner && me?.email !== r.email ? (
+                      <button className={`badge-status ${r.status === 'ACTIVE' ? 'bg-success-soft text-success' : 'bg-warning-soft text-warning'} hover:ring-1 hover:ring-line-strong`}
+                        title={r.status === 'ACTIVE' ? t('team.disable') : t('team.enable')}
+                        onClick={() => void patch(r, 'status', r.status === 'ACTIVE' ? 'DISABLED' : 'ACTIVE')}>{tx(`ustatus.${r.status}`, r.status)}</button>
+                    ) : <span className={`badge-status ${r.status === 'ACTIVE' ? 'bg-success-soft text-success' : 'bg-surface-2 text-muted'}`}>{tx(`ustatus.${r.status}`, r.status)}</span>}
+                  </td>
                   <td className="max-sm:hidden text-muted">{r.last_login_at ? date(r.last_login_at) : '—'}</td>
+                  <td className="text-end">
+                    {isOwner && (
+                      <div className="flex items-center justify-end gap-1">
+                        {r.role !== 'OWNER' && (
+                          <select className="input h-8 w-auto bg-surface py-0 text-xs" aria-label={`${t('set.user_role')}: ${r.email}`} value={r.role} onChange={(e) => void patch(r, 'role', e.target.value)}>
+                            <Options values={ROLES} prefix="role." />
+                          </select>
+                        )}
+                        <button className="btn-ghost btn-icon h-8 w-8" title={t('set.user_set_pw')} aria-label={`${t('set.user_set_pw')}: ${r.email}`} onClick={() => setPwFor(r)}><Icon name="pencil" /></button>
+                      </div>
+                    )}
+                  </td>
                 </tr>
               ))}</tbody>
             </table>
           </div>
         )}
       </section>
-      <Section title={t('set.users_add')}>
-        <form className="grid gap-3 sm:grid-cols-4 sm:items-end" onSubmit={(e) => { e.preventDefault(); void add(); }}>
-          <Field label={t('set.user_email')} htmlFor="u-e"><input id="u-e" type="email" required className="input" dir="ltr" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
+
+      <section className="mt-8 flex gap-4 rounded-xl border border-primary/20 bg-primary-soft/60 p-6">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface text-primary-fg shadow-sm"><Icon name="shield" className="h-5 w-5" /></span>
+        <div>
+          <h2 className="font-semibold text-primary-fg">{t('team.logic_title')}</h2>
+          <ul className="mt-1 space-y-1 text-[13px] leading-relaxed text-primary-fg/85">
+            <li>{t('team.logic_1')}</li>
+            <li>{t('team.logic_2')}</li>
+            <li>{t('team.logic_3')}</li>
+          </ul>
+        </div>
+      </section>
+
+      {me && <div className="mt-8"><MyPassword hasPassword={me.hasPassword} onChanged={() => setMe({ ...me, hasPassword: true })} /></div>}
+
+      <Modal open={inviteOpen} onClose={() => setInviteOpen(false)} title={t('set.users_add')}>
+        <form className="grid gap-4" onSubmit={(e) => { e.preventDefault(); void add().then(() => setInviteOpen(false)); }}>
+          <Field label={t('set.user_email')} htmlFor="u-e"><input id="u-e" type="email" required className="input" dir="ltr" autoComplete="off" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
           <Field label={t('set.user_name')} htmlFor="u-n"><input id="u-n" className="input" dir="auto" value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} /></Field>
-          <Field label={t('set.user_role')} htmlFor="u-r"><select id="u-r" className="input" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}><Options values={ROLES} prefix="role." /></select></Field>
-          <button className="btn-primary" disabled={busy}>{busy ? <Spinner /> : <Icon name="plus" />}{t('set.users_add')}</button>
+          <Field label={t('set.user_role')} htmlFor="u-r" {...(form.role === 'MAIL_USER' ? { hint: t('team.mail_only_desc') } : {})}><select id="u-r" className="input" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}><Options values={ROLES} prefix="role." /></select></Field>
+          <Field label={t('team.mailbox')} htmlFor="u-m" hint={t('team.mailbox_hint')}><input id="u-m" type="email" className="input" dir="ltr" autoComplete="off" placeholder={form.role === 'MAIL_USER' ? form.email : 'name@…'} value={form.mail_address} onChange={(e) => setForm({ ...form, mail_address: e.target.value })} /></Field>
+          <Field label={t('set.user_password')} htmlFor="u-p" hint={t('set.pw_hint')}>
+            <PasswordInput id="u-p" value={form.password} onChange={(v) => setForm({ ...form, password: v })} autoComplete="new-password" minLength={10} />
+          </Field>
+          <button className="btn-primary justify-center" disabled={busy}>{busy ? <Spinner /> : <Icon name="plus" />}{t('set.users_add')}</button>
         </form>
-      </Section>
+      </Modal>
+      {mbFor && <SetMailbox row={mbFor} onClose={() => setMbFor(null)} onSaved={() => { setMbFor(null); toast(t('common.saved')); void load(); }} />}
+      {pwFor && <SetUserPassword row={pwFor} onClose={() => setPwFor(null)} onSaved={() => { setPwFor(null); toast(t('set.pw_set')); void load(); }} />}
     </div>
+  );
+}
+
+/** Change own password (current password required once one is set). */
+function MyPassword({ hasPassword, onChanged }: { hasPassword: boolean; onChanged: () => void }) {
+  const i18n = useI18n();
+  const { t } = i18n;
+  const toast = useToast();
+  const [f, setF] = useState({ current: '', next: '', confirm: '' });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const mismatch = Boolean(f.confirm && f.confirm !== f.next);
+
+  async function save() {
+    if (f.next !== f.confirm) { setErr(t('set.pw_mismatch')); return; }
+    setErr(null); setBusy(true);
+    try {
+      await api.post('/auth/password', { current_password: f.current || undefined, new_password: f.next });
+      setF({ current: '', next: '', confirm: '' }); toast(t('set.pw_changed')); onChanged();
+    } catch (e) { setErr(errorText(e, i18n)); } finally { setBusy(false); }
+  }
+
+  return (
+    <Section title={t('set.my_password')} icon="lock">
+      <p className="mb-3 text-xs text-muted">{t('set.my_password_sub')}</p>
+      {err && <div className="mb-3" role="alert"><Alert tone="danger" onClose={() => setErr(null)}>{err}</Alert></div>}
+      <form className="grid gap-3 sm:grid-cols-3 sm:items-start" onSubmit={(e) => { e.preventDefault(); void save(); }}>
+        {hasPassword && (
+          <Field label={t('set.pw_current')} htmlFor="mp-c">
+            <PasswordInput id="mp-c" value={f.current} onChange={(v) => setF({ ...f, current: v })} autoComplete="current-password" required />
+          </Field>
+        )}
+        <Field label={t('set.pw_new')} htmlFor="mp-n" hint={t('set.pw_hint')}>
+          <PasswordInput id="mp-n" value={f.next} onChange={(v) => setF({ ...f, next: v })} autoComplete="new-password" required minLength={10} />
+        </Field>
+        <Field label={t('set.pw_confirm')} htmlFor="mp-r" error={mismatch ? t('set.pw_mismatch') : undefined}>
+          <PasswordInput id="mp-r" value={f.confirm} onChange={(v) => setF({ ...f, confirm: v })} autoComplete="new-password" required minLength={10} invalid={mismatch} />
+        </Field>
+        <div className="flex justify-end sm:col-span-3">
+          <button className="btn-primary" disabled={busy || !f.next || mismatch}>{busy ? <Spinner /> : <Icon name="check" />}{t('set.pw_change')}</button>
+        </div>
+      </form>
+    </Section>
+  );
+}
+
+/** Owner sets / resets another user's password (signs that user out). */
+function SetUserPassword({ row, onClose, onSaved }: { row: { id: string; email: string }; onClose: () => void; onSaved: () => void }) {
+  const i18n = useI18n();
+  const { t } = i18n;
+  const [pw, setPw] = useState('');
+  const [pw2, setPw2] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const mismatch = Boolean(pw2 && pw2 !== pw);
+  async function save() {
+    if (pw !== pw2) { setErr(t('set.pw_mismatch')); return; }
+    setErr(null); setBusy(true);
+    try { await api.put(`/settings/users/${row.id}/password`, { password: pw }); onSaved(); }
+    catch (e) { setErr(errorText(e, i18n)); } finally { setBusy(false); }
+  }
+  return (
+    <Modal open onClose={onClose} title={t('set.user_set_pw_title', { email: row.email })}
+      footer={<>
+        <button className="btn-secondary" onClick={onClose}>{t('common.cancel')}</button>
+        <button className="btn-primary" form="set-user-pw" disabled={busy || !pw || mismatch}>{busy ? <Spinner /> : <Icon name="lock" />}{t('common.save')}</button>
+      </>}>
+      <form id="set-user-pw" className="space-y-3" onSubmit={(e) => { e.preventDefault(); void save(); }}>
+        {err && <div role="alert"><Alert tone="danger" onClose={() => setErr(null)}>{err}</Alert></div>}
+        <Field label={t('set.pw_new')} htmlFor="sp-n" hint={t('set.pw_hint')}>
+          <PasswordInput id="sp-n" value={pw} onChange={setPw} autoComplete="new-password" required minLength={10} />
+        </Field>
+        <Field label={t('set.pw_confirm')} htmlFor="sp-r" error={mismatch ? t('set.pw_mismatch') : undefined}>
+          <PasswordInput id="sp-r" value={pw2} onChange={setPw2} autoComplete="new-password" required minLength={10} invalid={mismatch} />
+        </Field>
+      </form>
+    </Modal>
   );
 }
 

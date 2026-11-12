@@ -9,6 +9,8 @@
 import type { Env } from '../../config/env';
 import { bytesToBase64 } from '../../lib/crypto';
 
+export interface OutboundAttachment { filename: string; mime: string; bytes: Uint8Array }
+
 export interface OutboundMessage {
   from: string;
   fromName?: string;
@@ -18,7 +20,13 @@ export interface OutboundMessage {
   replyTo?: string;
   subject: string;
   text: string;
-  attachment?: { filename: string; mime: string; bytes: Uint8Array };
+  /** Optional HTML alternative (sent as multipart/alternative next to the text). */
+  html?: string;
+  attachment?: OutboundAttachment;
+  attachments?: OutboundAttachment[];
+  /** Threading: Message-ID of the mail being answered, and its References chain. */
+  inReplyTo?: string;
+  references?: string;
 }
 
 export interface SendResult {
@@ -31,7 +39,21 @@ export interface EmailProvider {
   send(env: Env, msg: OutboundMessage): Promise<SendResult>;
 }
 
-/** Build a raw RFC822 MIME message (multipart/mixed when there's an attachment). */
+/** Split a comma/semicolon separated address list. */
+export function addressList(v?: string | null): string[] {
+  return (v ?? '').split(/[,;]/).map((x) => x.trim()).filter(Boolean);
+}
+
+/** Every envelope recipient (To, Cc, Bcc), de-duplicated, bare addresses only. */
+export function envelopeRecipients(msg: OutboundMessage): string[] {
+  const all = [...addressList(msg.to), ...addressList(msg.cc), ...addressList(msg.bcc)]
+    .map((a) => (/<([^>]+)>/.exec(a)?.[1] ?? a).trim().toLowerCase());
+  return [...new Set(all)];
+}
+
+const b64 = (s: string | Uint8Array) => chunk76(bytesToBase64(typeof s === 'string' ? new TextEncoder().encode(s) : s));
+
+/** Build a raw RFC822 MIME message: text (+ html alternative) (+ attachments). Bcc never appears in headers. */
 export function buildMime(msg: OutboundMessage): { raw: string; messageId: string } {
   const domain = msg.from.split('@')[1] ?? 'localhost';
   const messageId = `<${crypto.randomUUID()}@${domain}>`;
@@ -41,38 +63,38 @@ export function buildMime(msg: OutboundMessage): { raw: string; messageId: strin
     `To: ${msg.to}`,
     ...(msg.cc ? [`Cc: ${msg.cc}`] : []),
     ...(msg.replyTo ? [`Reply-To: ${msg.replyTo}`] : []),
+    ...(msg.inReplyTo ? [`In-Reply-To: ${msg.inReplyTo}`] : []),
+    ...(msg.references || msg.inReplyTo ? [`References: ${[msg.references, msg.inReplyTo].filter(Boolean).join(' ')}`] : []),
     `Message-ID: ${messageId}`,
     `Date: ${new Date().toUTCString()}`,
     `Subject: ${encodeWord(msg.subject)}`,
     'MIME-Version: 1.0',
   ];
+  const leaf = (type: string, body: string, extra: string[] = []) =>
+    ({ head: [`Content-Type: ${type}`, 'Content-Transfer-Encoding: base64', ...extra], body });
+  const multi = (kind: string, parts: { head: string[]; body: string }[]) => {
+    const boundary = `bnd_${crypto.randomUUID().replace(/-/g, '')}`;
+    const body = parts.map((p) => `--${boundary}\r\n${p.head.join('\r\n')}\r\n\r\n${p.body}`).join('\r\n') + `\r\n--${boundary}--\r\n`;
+    return { head: [`Content-Type: multipart/${kind}; boundary="${boundary}"`], body };
+  };
 
-  if (!msg.attachment) {
-    headers.push('Content-Type: text/plain; charset=utf-8', 'Content-Transfer-Encoding: base64');
-    const body = bytesToBase64(new TextEncoder().encode(msg.text));
-    return { raw: `${headers.join('\r\n')}\r\n\r\n${chunk76(body)}\r\n`, messageId };
-  }
+  const text = leaf('text/plain; charset=utf-8', b64(msg.text));
+  const content = msg.html ? multi('alternative', [text, leaf('text/html; charset=utf-8', b64(msg.html))]) : text;
+  const atts = [...(msg.attachment ? [msg.attachment] : []), ...(msg.attachments ?? [])];
+  const root = atts.length
+    ? multi('mixed', [content, ...atts.map((a) => leaf(`${a.mime}; name="${asciiName(a.filename)}"`, b64(a.bytes), [`Content-Disposition: attachment; ${fileParam(a.filename)}`]))])
+    : content;
+  return { raw: `${[...headers, ...root.head].join('\r\n')}\r\n\r\n${root.body}${root.body.endsWith('\r\n') ? '' : '\r\n'}`, messageId };
+}
 
-  const boundary = `bnd_${crypto.randomUUID().replace(/-/g, '')}`;
-  headers.push(`Content-Type: multipart/mixed; boundary="${boundary}"`);
-  const textB64 = bytesToBase64(new TextEncoder().encode(msg.text));
-  const attB64 = bytesToBase64(msg.attachment.bytes);
-  const parts = [
-    `--${boundary}`,
-    'Content-Type: text/plain; charset=utf-8',
-    'Content-Transfer-Encoding: base64',
-    '',
-    chunk76(textB64),
-    `--${boundary}`,
-    `Content-Type: ${msg.attachment.mime}; name="${msg.attachment.filename}"`,
-    'Content-Transfer-Encoding: base64',
-    `Content-Disposition: attachment; filename="${msg.attachment.filename}"`,
-    '',
-    chunk76(attB64),
-    `--${boundary}--`,
-    '',
-  ];
-  return { raw: `${headers.join('\r\n')}\r\n\r\n${parts.join('\r\n')}`, messageId };
+function asciiName(name: string): string {
+  return name.replace(/[^\x20-\x7E]/g, '_').replace(/"/g, "'");
+}
+/** filename="ascii" plus RFC 2231 filename* for non-ASCII names. */
+function fileParam(name: string): string {
+  // eslint-disable-next-line no-control-regex
+  if (/^[\x20-\x7E]*$/.test(name)) return `filename="${name.replace(/"/g, "'")}"`;
+  return `filename="${asciiName(name)}"; filename*=UTF-8''${encodeURIComponent(name)}`;
 }
 
 function chunk76(s: string): string {
@@ -90,8 +112,10 @@ export class CloudflareEmailProvider implements EmailProvider {
   async send(env: Env, msg: OutboundMessage): Promise<SendResult> {
     const { EmailMessage } = await import('cloudflare:email');
     const { raw, messageId } = buildMime(msg);
-    const email = new EmailMessage(msg.from, msg.to, raw);
-    await env.EMAIL.send(email as unknown as object);
+    // One EmailMessage per envelope recipient: the binding takes a single "to".
+    for (const rcpt of envelopeRecipients(msg)) {
+      await env.EMAIL.send(new EmailMessage(msg.from, rcpt, raw) as unknown as object);
+    }
     return { messageId, provider: this.name };
   }
 }
@@ -109,7 +133,27 @@ export function setEmailProvider(p: EmailProvider | null): void {
   providerOverride = p;
 }
 
-export async function resolveProvider(env: Env): Promise<EmailProvider> {
+/** Provider for system mail (invoices, contracts, password links): every attempt is copied to the mailbox "Sent" folder. */
+export async function resolveProvider(env: Env, opts: { log?: boolean; related?: { type: string; id: string } } = {}): Promise<EmailProvider> {
+  const base = await resolveBaseProvider(env);
+  if (opts.log === false) return base;
+  return {
+    name: base.name,
+    async send(e: Env, msg: OutboundMessage): Promise<SendResult> {
+      const { recordOutbound } = await import('../mail-service');
+      try {
+        const res = await base.send(e, msg);
+        await recordOutbound(e, msg, { messageId: res.messageId, related: opts.related }).catch(() => undefined);
+        return res;
+      } catch (err) {
+        await recordOutbound(e, msg, { error: err instanceof Error ? err.message : String(err), related: opts.related }).catch(() => undefined);
+        throw err;
+      }
+    },
+  };
+}
+
+export async function resolveBaseProvider(env: Env): Promise<EmailProvider> {
   if (providerOverride) return providerOverride;
   const { getGroup } = await import('../../db/repositories/settings-repo');
   const out = await getGroup(env.DB, 'EMAIL_OUTBOUND');

@@ -1,5 +1,6 @@
+import { buildTaxNote } from './tax-note';
 import { setFinancials, setIranTax } from '../db/repositories/invoice-repo';
-import { iranTaxNote, iranTreatment, isIranCurrency } from './iran-tax';
+import { iranTreatment, isIranCurrency } from './iran-tax';
 /**
  * Invoice issue pipeline — idempotent finalization.
  *
@@ -98,17 +99,10 @@ export async function issueInvoice(
   const sellerSnapshot = snapshotSeller(seller);
   const customerSnapshot = snapshotCustomer(customer);
   const language = (['fa', 'en', 'de'].includes(invoice.invoice_language) ? invoice.invoice_language : 'de') as 'de' | 'fa' | 'en';
-  // The §19 Kleinunternehmer exemption note is shown on German and English EUR
-  // invoices (localized). For Persian/Iran invoices the optional note comes from
-  // public_note (usually none).
-  const EN_19 = 'In accordance with § 19 of the German VAT Act (UStG), no VAT is charged.';
-  const taxText = iran
-    ? [iranTaxNote(iran, language), invoice.public_note].filter(Boolean).join('\n')
-    : language === 'fa'
-    ? (invoice.public_note ?? '')
-    : language === 'en'
-      ? (invoice.currency === 'EUR' ? EN_19 : (invoice.public_note ?? ''))
-      : (settings.tax_exemption_text || seller.tax_exemption_text || DEFAULTS.taxExemptionText);
+  const taxText = buildTaxNote({
+    lang: language, iran, taxRateBp: rateBp,
+    germanText: settings.tax_exemption_text || seller.tax_exemption_text, publicNote: invoice.public_note,
+  });
 
   const canonical = {
     document_type: invoice.document_type,
@@ -208,6 +202,7 @@ export async function issueInvoice(
       projectName: invoice.project_name,
       buyerReference: invoice.buyer_reference,
       orderReference: invoice.order_reference ?? invoice.purchase_order_reference,
+      contractReference: invoice.contract_reference ?? null,
       items: items.map((it) => ({
         position: it.position,
         description: it.description,

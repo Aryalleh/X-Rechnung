@@ -1,5 +1,6 @@
 /** Shared UI kit: icons, layout primitives, feedback, theme. */
 import { createContext, useCallback, useContext, useEffect, useId, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 import { useI18n } from './i18n';
 import type { MsgKey } from './i18n';
@@ -30,8 +31,36 @@ const ICONS: Record<string, ReactNode> = {
   globe: <><circle cx="12" cy="12" r="10" /><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" /><path d="M2 12h20" /></>,
   menu: <><path d="M4 6h16" /><path d="M4 12h16" /><path d="M4 18h16" /></>,
   eye: <><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" /><circle cx="12" cy="12" r="3" /></>,
+  eyeOff: <><path d="M9.9 4.2A9.6 9.6 0 0 1 12 4c7 0 10 8 10 8a17.6 17.6 0 0 1-2.2 3.2" /><path d="M6.6 6.6C3.6 8.6 2 12 2 12s3 7 10 7a9.7 9.7 0 0 0 5.4-1.6" /><path d="M14.1 14.1a3 3 0 0 1-4.2-4.2" /><line x1="2" y1="2" x2="22" y2="22" /></>,
+  pen: <><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></>,
+  fileSign: <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><path d="M8 18c1.5-2 2.5-2 3 0s1.5 2 3 0" /></>,
+  copy: <><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></>,
+  link: <><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7" /><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7" /></>,
+  lock: <><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></>,
+  logOut: <><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></>,
   bookmark: <path d="M19 21l-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z" />,
   chevronDown: <path d="m6 9 6 6 6-6" />,
+  arrowLeft: <><path d="m12 19-7-7 7-7" /><path d="M19 12H5" /></>,
+  star: <path d="M12 2l3.1 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.8 21l1.2-6.8-5-4.9 6.9-1z" />,
+  more: <><circle cx="12" cy="5" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="12" cy="19" r="1" /></>,
+  shield: <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />,
+  sliders: <><path d="M4 21v-7" /><path d="M4 10V3" /><path d="M12 21v-9" /><path d="M12 8V3" /><path d="M20 21v-5" /><path d="M20 12V3" /><path d="M1 14h6" /><path d="M9 8h6" /><path d="M17 16h6" /></>,
+  zoomIn: <><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /><path d="M11 8v6" /><path d="M8 11h6" /></>,
+  zoomOut: <><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /><path d="M8 11h6" /></>,
+  reply: <><path d="m9 17-5-5 5-5" /><path d="M20 18v-2a4 4 0 0 0-4-4H4" /></>,
+  replyAll: <><path d="m7 17-5-5 5-5" /><path d="m12 17-5-5 5-5" /><path d="M22 18v-2a4 4 0 0 0-4-4H7" /></>,
+  forward: <><path d="m15 17 5-5-5-5" /><path d="M4 18v-2a4 4 0 0 1 4-4h12" /></>,
+  archive: <><rect x="2" y="4" width="20" height="5" rx="1" /><path d="M4 9v9a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9" /><path d="M10 13h4" /></>,
+  paperclip: <path d="m21.4 11.1-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5" />,
+  refresh: <><path d="M21 12a9 9 0 1 1-3-6.7L21 8" /><path d="M21 3v5h-5" /></>,
+  calendar: <><rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" /></>,
+  contact: <><rect x="3" y="2" width="18" height="20" rx="2" /><circle cx="12" cy="10" r="3" /><path d="M7 18a5 5 0 0 1 10 0" /></>,
+  checklist: <><path d="M11 6h9M11 12h9M11 18h9" /><path d="m3 6 1.5 1.5L7 5M3 12l1.5 1.5L7 11M3 18l1.5 1.5L7 17" /></>,
+  note: <><path d="M15 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9z" /><path d="M15 3v6h6M8 13h8M8 17h5" /></>,
+  chevronLeft: <path d="m15 18-6-6 6-6" />,
+  phone: <><rect x="6" y="2" width="12" height="20" rx="2" /><path d="M11 18h2" /></>,
+  server: <><rect x="2" y="3" width="20" height="8" rx="2" /><rect x="2" y="13" width="20" height="8" rx="2" /><path d="M6 7h.01M6 17h.01" /></>,
+  mail: <><rect x="2" y="4" width="20" height="16" rx="2" /><path d="m22 7-10 6L2 7" /></>,
   chevronRight: <path d="m9 18 6-6-6-6" />,
   user: <><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></>,
   building: <><rect x="4" y="2" width="16" height="20" rx="2" /><path d="M9 22v-4h6v4" /><path d="M8 6h.01" /><path d="M16 6h.01" /><path d="M12 6h.01" /><path d="M12 10h.01" /><path d="M12 14h.01" /><path d="M16 10h.01" /><path d="M16 14h.01" /><path d="M8 10h.01" /><path d="M8 14h.01" /></>,
@@ -56,10 +85,39 @@ export function Icon({ name, className = 'h-4 w-4', flip }: { name: IconName; cl
 
 export function Logo({ className = 'h-8 w-8' }: { className?: string }) {
   return (
-    <svg viewBox="0 0 32 32" className={className} aria-hidden="true">
+    <svg viewBox="0 0 32 32" className={`${className} shrink-0`} aria-hidden="true">
       <rect width="32" height="32" rx="8" fill="rgb(var(--primary))" />
-      <path d="M10 9l12 14M22 9L10 23" stroke="white" strokeWidth="3" strokeLinecap="round" />
+      <path d="M12 8.5h6l4 4v10a1.5 1.5 0 0 1-1.5 1.5h-8.5A1.5 1.5 0 0 1 10.5 22.5v-12.5A1.5 1.5 0 0 1 12 8.5Z" fill="none" stroke="white" strokeWidth="1.8" strokeLinejoin="round" />
+      <path d="M13.5 15.5h5M13.5 18.5h5" stroke="white" strokeWidth="1.8" strokeLinecap="round" />
     </svg>
+  );
+}
+
+/* --------------------------------------------------------------- top bar */
+/** Pages with a design-specific header (back arrow, title, actions) render it into the shell's header slot. */
+export const TopBarCtx = createContext<{ el: HTMLElement | null; mount: () => () => void }>({ el: null, mount: () => () => {} });
+
+export function TopBar({ title, subtitle, back, actions }: { title: ReactNode; subtitle?: ReactNode; back?: string; actions?: ReactNode }) {
+  const { el, mount } = useContext(TopBarCtx);
+  const { t } = useI18n();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => mount(), []);
+  if (!el) return null;
+  return createPortal(
+    <div className="flex min-w-0 flex-1 items-center gap-3">
+      {back && (
+        <a href={back} onClick={(e) => { e.preventDefault(); window.history.length > 1 ? window.history.back() : window.location.assign(back); }}
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted hover:bg-surface-2 hover:text-fg" aria-label={t('common.back')}>
+          <Icon name="arrowLeft" className="h-5 w-5" flip />
+        </a>
+      )}
+      <div className="min-w-0 flex-1">
+        <h1 className="truncate text-lg font-bold leading-tight">{title}</h1>
+        {subtitle && <p className="truncate text-xs text-muted">{subtitle}</p>}
+      </div>
+      {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
+    </div>,
+    el,
   );
 }
 
@@ -160,10 +218,13 @@ const STATUS_TONE: Record<string, string> = {
   OVERDUE: 'bg-danger-soft text-danger',
   CANCELLATION_PENDING: 'bg-warning-soft text-warning',
   CANCELLED: 'bg-surface-2 text-muted line-through',
+  VIEWED: 'bg-warning-soft text-warning',
+  CUSTOMER_SIGNED: 'bg-primary-soft text-primary-fg',
+  SIGNED: 'bg-success-soft text-success',
 };
 export function StatusBadge({ status }: { status: string }) {
   const { tx } = useI18n();
-  return <span className={`badge ${STATUS_TONE[status] ?? 'bg-surface-2 text-muted'}`}>{tx(`status.${status}`, status)}</span>;
+  return <span className={`badge-status ${STATUS_TONE[status] ?? 'bg-surface-2 text-muted'}`}>{tx(`status.${status}`, status)}</span>;
 }
 
 export function Badge({ tone = 'neutral', children }: { tone?: Tone | 'neutral'; children: ReactNode }) {
@@ -279,3 +340,25 @@ export function Options({ values, prefix }: { values: readonly string[]; prefix:
 }
 
 export function useT() { return useI18n().t as (k: MsgKey, v?: Record<string, string | number>) => string; }
+
+/** Password field with a show/hide toggle (44px hit area, labelled for screen readers). */
+export function PasswordInput({ id, value, onChange, autoComplete, required, minLength, invalid, describedBy }: {
+  id: string; value: string; onChange: (v: string) => void; autoComplete: 'current-password' | 'new-password';
+  required?: boolean; minLength?: number; invalid?: boolean; describedBy?: string;
+}) {
+  const { t } = useI18n();
+  const [show, setShow] = useState(false);
+  return (
+    <div className="relative">
+      <input id={id} type={show ? 'text' : 'password'} className="input pe-11" dir="ltr" value={value}
+        onChange={(e) => onChange(e.target.value)} autoComplete={autoComplete} required={required} minLength={minLength}
+        autoCapitalize="off" autoCorrect="off" spellCheck={false}
+        aria-invalid={invalid || undefined} aria-describedby={describedBy} />
+      <button type="button" onClick={() => setShow(!show)} aria-pressed={show}
+        aria-label={show ? t('auth.hide_pw') : t('auth.show_pw')} title={show ? t('auth.hide_pw') : t('auth.show_pw')}
+        className="absolute inset-y-0 end-0 flex w-11 items-center justify-center rounded-e-lg text-muted transition-colors hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary">
+        <Icon name={show ? 'eyeOff' : 'eye'} className="h-[18px] w-[18px]" />
+      </button>
+    </div>
+  );
+}

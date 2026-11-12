@@ -12,14 +12,23 @@ export const templateRoutes = new Hono<HonoEnv>();
 interface Template {
   id: string; name: string; default_description: string; unit: string;
   default_price_cents: number; category: string | null; is_active: number; sort_order: number;
+  market: 'DE' | 'IR'; currency: string;
 }
 
+/** German templates belong to EUR invoices, Persian ones to rial/toman invoices. */
+export function marketOf(currency: string | null | undefined): 'DE' | 'IR' {
+  return currency === 'IRR' || currency === 'IRT' || currency === 'IRT_NEW' ? 'IR' : 'DE';
+}
+
+/** GET /templates?active=1&market=IR|DE (or &currency=IRT → its market). */
 templateRoutes.get('/', async (c) => {
-  const activeOnly = c.req.query('active') === '1';
-  const rows = activeOnly
-    ? await all<Template>(c.env.DB, `SELECT * FROM service_templates WHERE is_active=1 ORDER BY sort_order, name`)
-    : await all<Template>(c.env.DB, `SELECT * FROM service_templates ORDER BY sort_order, name`);
-  return ok(c, rows);
+  const where: string[] = [];
+  const binds: unknown[] = [];
+  if (c.req.query('active') === '1') where.push('is_active = 1');
+  const market = c.req.query('market') ?? (c.req.query('currency') ? marketOf(c.req.query('currency')) : undefined);
+  if (market === 'DE' || market === 'IR') { binds.push(market); where.push(`market = ?${binds.length}`); }
+  const sql = `SELECT * FROM service_templates ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY sort_order, name`;
+  return ok(c, await all<Template>(c.env.DB, sql, ...binds));
 });
 
 templateRoutes.post('/', async (c) => {
@@ -27,10 +36,10 @@ templateRoutes.post('/', async (c) => {
   const id = newId('tpl');
   await run(
     c.env.DB,
-    `INSERT INTO service_templates (id, name, default_description, unit, default_price_cents, category, is_active, sort_order)
-     VALUES (?1,?2,?3,?4,?5,?6,?7,?8)`,
+    `INSERT INTO service_templates (id, name, default_description, unit, default_price_cents, category, is_active, sort_order, market, currency)
+     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)`,
     id, body.name, body.default_description, body.unit, body.default_price_cents, body.category ?? null,
-    body.is_active ? 1 : 0, body.sort_order,
+    body.is_active ? 1 : 0, body.sort_order, marketOf(body.currency), body.currency,
   );
   return ok(c, await one(c.env.DB, `SELECT * FROM service_templates WHERE id=?1`, id), 201);
 });
@@ -43,9 +52,9 @@ templateRoutes.put('/:id', async (c) => {
   await run(
     c.env.DB,
     `UPDATE service_templates SET name=?2, default_description=?3, unit=?4, default_price_cents=?5,
-       category=?6, is_active=?7, sort_order=?8, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1`,
+       category=?6, is_active=?7, sort_order=?8, market=?9, currency=?10, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1`,
     id, body.name, body.default_description, body.unit, body.default_price_cents, body.category ?? null,
-    body.is_active ? 1 : 0, body.sort_order,
+    body.is_active ? 1 : 0, body.sort_order, marketOf(body.currency), body.currency,
   );
   return ok(c, await one(c.env.DB, `SELECT * FROM service_templates WHERE id=?1`, id));
 });
