@@ -21,7 +21,7 @@
 
   // Non-business bootstrap var only. Everything else comes from D1 settings.
   "vars": {
-    "ENVIRONMENT": "development"
+    "ENVIRONMENT": "production"
   },
 
   // Frontend (React/Vite build output) served as static assets.
