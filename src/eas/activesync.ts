@@ -49,14 +49,17 @@ const FOLDERS = [
   { id: 'tasks', folder: null, type: 7, name: 'Tasks' },
 ] as const;
 /** Folder hierarchy versions: v1 = mail folders, v2 = + calendar/contacts/notes, v3 = + tasks. */
-const HIERARCHY_VERSION = 3;
+export const HIERARCHY_VERSION = 3;
 const FOLDERS_SINCE: Record<string, number> = { calendar: 2, contacts: 2, notes: 2, tasks: 3 };
 const PIM: Record<string, PimKind> = { calendar: 'calendar', contacts: 'contacts', notes: 'notes', tasks: 'tasks' };
 const CLASS_OF: Record<PimKind, string> = { calendar: 'Calendar', contacts: 'Contacts', notes: 'Notes', tasks: 'Tasks' };
 const folderById = (id: string | undefined) => FOLDERS.find((f) => f.id === id);
 const idOfFolder = (folder: string) => FOLDERS.find((f) => f.folder === folder)?.id ?? 'inbox';
 
-interface Device { id: string; user_id: string; device_id: string; policy_key: string | null; blocked: number; sync_cache: string | null; ping_cache: string | null }
+interface Device {
+  id: string; user_id: string; device_id: string; policy_key: string | null; blocked: number; sync_cache: string | null; ping_cache: string | null;
+  hierarchy_key: string | null; hierarchy_hint_at: string | null;
+}
 interface Ctx { env: Env; actor: Actor; scope: MailScope; device: Device; version: string; multipart: boolean; waitUntil: (p: Promise<unknown>) => void }
 interface BodyPref { type: number; truncation?: number }
 interface CollOptions { filterType: number; prefs: BodyPref[]; mime: number }
@@ -157,7 +160,7 @@ async function loadDevice(env: Env, userId: string, req: Req, ua: string | undef
     ON CONFLICT(user_id, device_id) DO UPDATE SET device_type = excluded.device_type, user_agent = coalesce(excluded.user_agent, user_agent),
       protocol = excluded.protocol, last_seen = strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
   id, userId, req.deviceId, req.deviceType || null, ua?.slice(0, 200) ?? null, version);
-  return (await one<Device>(env.DB, `SELECT id, user_id, device_id, policy_key, blocked, sync_cache, ping_cache FROM eas_devices WHERE id = ?1`, id))!;
+  return (await one<Device>(env.DB, `SELECT id, user_id, device_id, policy_key, blocked, sync_cache, ping_cache, hierarchy_key, hierarchy_hint_at FROM eas_devices WHERE id = ?1`, id))!;
 }
 
 // ----------------------------------------------------------------- mailbox state
@@ -312,12 +315,14 @@ async function remove(ctx: Ctx, id: string, collectionId: string, asMove: boolea
 
 // ----------------------------------------------------------------- commands
 
-async function folderSync(_ctx: Ctx, req: WNode | null): Promise<Response> {
+async function folderSync(ctx: Ctx, req: WNode | null): Promise<Response> {
   const key = textOf(req, 'FolderHierarchy:SyncKey') ?? '0';
   // The sync key is the hierarchy version the phone has; send the folders added since then.
   const have = Number(key);
   if (!Number.isInteger(have) || have < 0 || have > HIERARCHY_VERSION) return wbxml(el('FolderHierarchy:FolderSync', el('FolderHierarchy:Status', 9)));
   const added = FOLDERS.filter((f) => (FOLDERS_SINCE[f.id] ?? 1) > have);
+  await run(ctx.env.DB, `UPDATE eas_devices SET hierarchy_key = ?2 WHERE id = ?1`, ctx.device.id, String(HIERARCHY_VERSION));
+  ctx.device.hierarchy_key = String(HIERARCHY_VERSION);
   return wbxml(el('FolderHierarchy:FolderSync',
     el('FolderHierarchy:Status', 1),
     el('FolderHierarchy:SyncKey', String(HIERARCHY_VERSION)),
@@ -332,7 +337,26 @@ async function folderSync(_ctx: Ctx, req: WNode | null): Promise<Response> {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** Re-send the "folder list changed" hint at most this often, so a client that ignores it still syncs mail. */
+const HINT_EVERY_MS = 30 * 60_000;
+
+/**
+ * Phones only re-read the folder list when the server says it changed (Ping status 7,
+ * Sync status 12). Without this, a phone set up before calendar/contacts/notes/tasks
+ * existed keeps its old mail-only list forever and never syncs them.
+ */
+export async function hierarchyOutdated(ctx: Ctx): Promise<boolean> {
+  if (ctx.device.hierarchy_key === String(HIERARCHY_VERSION)) return false;
+  const last = ctx.device.hierarchy_hint_at ? Date.parse(ctx.device.hierarchy_hint_at) : 0;
+  if (Date.now() - last < HINT_EVERY_MS) return false;
+  const now = new Date().toISOString();
+  await run(ctx.env.DB, `UPDATE eas_devices SET hierarchy_hint_at = ?2 WHERE id = ?1`, ctx.device.id, now);
+  ctx.device.hierarchy_hint_at = now;
+  return true;
+}
+
 async function sync(ctx: Ctx, reqIn: WNode | null): Promise<Response> {
+  if (await hierarchyOutdated(ctx)) return wbxml(el('AirSync:Sync', el('AirSync:Status', 12)));
   // Empty or partial requests reuse the last full one (MS-ASCMD 2.2.3.170).
   let req = reqIn;
   const cached = ctx.device.sync_cache ? decodeCache(ctx.device.sync_cache) : null;
@@ -583,6 +607,7 @@ async function pendingFor(ctx: Ctx, collId: string): Promise<number | null> {
 }
 
 async function ping(ctx: Ctx, req: WNode | null): Promise<Response> {
+  if (await hierarchyOutdated(ctx)) return wbxml(el('Ping:Ping', el('Ping:Status', 7)));
   let folders = kids(child(req, 'Ping:Folders'), 'Ping:Folder').map((f) => textOf(f, 'Ping:Id') ?? '').filter(Boolean);
   let hb = Number(textOf(req, 'Ping:HeartbeatInterval') ?? 0);
   if (folders.length || hb) {

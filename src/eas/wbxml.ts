@@ -74,6 +74,9 @@ const PAGES: Record<number, [string, string[]]> = {
 const BY_NAME = new Map<string, [number, number]>();
 for (const [page, [ns, tags]] of Object.entries(PAGES)) tags.forEach((t, i) => BY_NAME.set(`${ns}:${t}`, [Number(page), i + 5]));
 
+/** Whether a "Page:Tag" name can be encoded (unknown names would make encode() throw). */
+export const hasTag = (tag: string): boolean => BY_NAME.has(tag);
+
 export interface WNode {
   tag: string;
   children: WNode[];

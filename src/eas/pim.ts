@@ -1,5 +1,5 @@
 /** ActiveSync ⇄ database mapping for calendar, contacts and notes. */
-import { child, el, kids, textOf, type WNode } from './wbxml';
+import { child, el, hasTag, kids, textOf, type WNode } from './wbxml';
 import type { Attendee, ContactRow, EventInput, EventRow, NoteRow, Recurrence, TaskInput, TaskRow } from '../services/pim-service';
 
 /** TIME_ZONE_INFORMATION for UTC (172 zero bytes): times are sent in UTC and phones convert. */
@@ -126,9 +126,9 @@ const CONTACT_SKIP = new Set(['Body', 'BodySize', 'BodyTruncated', 'Categories',
 export function contactProps(c: ContactRow, prefs: BodyPref[]): (WNode | null)[] {
   const data = JSON.parse(c.data_json) as Record<string, string>;
   return [
-    ...Object.entries(data).filter(([k]) => !CONTACT_SKIP.has(k)).map(([k, v]) => {
-      try { return el(`Contacts:${k}`, v); } catch { return null; }
-    }),
+    // Only real ActiveSync contact fields: one unknown key would make the whole Sync response fail to encode.
+    ...Object.entries(data).filter(([k, v]) => !CONTACT_SKIP.has(k) && hasTag(`Contacts:${k}`) && typeof v === 'string' && v !== '')
+      .map(([k, v]) => el(`Contacts:${k}`, v)),
     c.body ? bodyNode(c.body, prefs) : null,
     categoriesOut(c.categories_json, 'Contacts'),
   ];
