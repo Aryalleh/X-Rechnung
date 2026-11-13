@@ -15,7 +15,12 @@ interface Att { id: string; filename: string; mime_type: string; size_bytes: num
 interface Detail extends Row {
   mailbox: string | null; cc_email: string | null; text_body: string | null; has_html: boolean; message_id: string | null;
   raw_r2_key: string | null; error_text: string | null; related_type: string | null; related_id: string | null; sent_by: string | null;
-  attachments: Att[]; supervised?: boolean; thread: { id: string; direction: string; from_email: string | null; from_name: string | null; subject: string | null; snippet: string | null; created_at: string; status: string }[];
+  attachments: Att[]; box?: Box | null; other_user?: boolean; thread: { id: string; direction: string; from_email: string | null; from_name: string | null; subject: string | null; snippet: string | null; created_at: string; status: string }[];
+}
+type Box = 'personal' | 'platform' | 'business';
+interface OwnerBoxes {
+  domain: string | null; personal: { address: string | null; unread: number }; platform: { address: string | null; unread: number };
+  business: { unread: number }; addresses: Mailbox[];
 }
 interface Mailbox { mailbox: string; total: number; received: number; sent: number; failed: number; last_at: string | null; user_email: string | null; user_name: string | null }
 interface Counts { folders: Record<string, { total: number; unread: number }>; starred: number }
@@ -23,13 +28,14 @@ export interface MailSettingsT { domain: string; addresses: string[]; invoiceAdd
 export interface MailStatus {
   domain: string | null; sendBinding: boolean; mx: { ok: boolean; records: string[] }; spf: { ok: boolean; value: string | null }; dkim: { ok: boolean };
   fromEmail: string | null; lastInbound: string | null; lastOutbound: string | null; failed: number; senders: string[]; settings: MailSettingsT | null;
-  me: { address: string | null; canManage: boolean; shared: boolean; supervisor?: boolean };
+  me: { address: string | null; canManage: boolean; shared: boolean; owner?: boolean; platform?: string | null };
 }
 interface Draft { from: string; to: string; cc: string; bcc: string; subject: string; text: string; files: { filename: string; mime: string; data: string; size: number }[]; reply_to_id?: string; forward_id?: string; showCc: boolean }
 
 const FOLDERS: { key: Folder; icon: IconName }[] = [
   { key: 'INBOX', icon: 'inbox' }, { key: 'STARRED', icon: 'star' }, { key: 'SENT', icon: 'send' }, { key: 'ARCHIVE', icon: 'archive' }, { key: 'TRASH', icon: 'trash' },
 ];
+const BOXES: { key: Box; icon: IconName }[] = [{ key: 'personal', icon: 'user' }, { key: 'platform', icon: 'server' }, { key: 'business', icon: 'building' }];
 const MAX_BYTES = 20 * 1024 * 1024;
 
 export function Mail() {
@@ -46,36 +52,37 @@ export function Mail() {
   const [status, setStatus] = useState<MailStatus | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  // OWNER supervisor view ("All domain mail"): ?view=all, optionally narrowed by mailbox / direction.
+  // The OWNER has three mailboxes (?box=personal|platform|business); the business one can be
+  // narrowed to a single address (?addr=…). Everyone else has one mailbox and no ?box.
   const [params, setParams] = useSearchParams();
-  const allMode = params.get('view') === 'all' && !!status?.me.supervisor;
-  const allBox = params.get('box');
-  const allDir = params.get('dir');
-  const [boxes, setBoxes] = useState<{ domain: string | null; mailboxes: Mailbox[] } | null>(null);
-  const allQs = allMode ? `?${new URLSearchParams({ view: 'all', ...(allBox !== null ? { box: allBox } : {}), ...(allDir ? { dir: allDir } : {}) })}` : '';
-  const setAllFilter = (patch: Record<string, string | null>) => {
-    const p = new URLSearchParams(params);
-    for (const [k, v] of Object.entries(patch)) { if (v === null || v === '') p.delete(k); else p.set(k, v); }
-    nav(`/mail?${p}`);
-  };
+  const isOwner = !!status?.me.owner;
+  const box: Box | null = !isOwner ? null
+    : (['personal', 'platform', 'business'] as Box[]).find((b) => b === params.get('box')) ?? (status?.me.address ? 'personal' : 'platform');
+  const addr = box === 'business' ? params.get('addr') : null;
+  const [boxes, setBoxes] = useState<OwnerBoxes | null>(null);
+  const boxQs = box ? `?${new URLSearchParams({ box, ...(addr !== null ? { addr } : {}) })}` : '';
+  const openBox = (b: Box, a: string | null = null) => nav(`/mail?${new URLSearchParams({ box: b, ...(a !== null ? { addr: a } : {}) })}`);
 
-  const loadCounts = useCallback(() => api.get<Counts>('/mail/counts').then(setCounts).catch(() => {}), []);
+  const boxParams = useCallback((p: URLSearchParams) => {
+    if (box) p.set('box', box);
+    if (addr !== null) p.set('mailbox', addr);
+    return p;
+  }, [box, addr]);
+  const loadCounts = useCallback(() => {
+    if (status && status.me.owner && !box) return Promise.resolve();
+    return api.get<Counts>(`/mail/counts?${boxParams(new URLSearchParams())}`).then(setCounts).catch(() => {});
+  }, [boxParams, status, box]);
+  const loadBoxes = useCallback(() => { if (isOwner) api.get<OwnerBoxes>('/mail/owner/boxes').then(setBoxes).catch(() => {}); }, [isOwner]);
   const loadList = useCallback(() => {
-    const p = new URLSearchParams({ folder: allMode ? 'ALL' : folder, limit: '100' });
+    if (!status) return Promise.resolve();
+    const p = boxParams(new URLSearchParams({ folder, limit: '100' }));
     if (q.trim()) p.set('q', q.trim());
-    if (allMode) {
-      p.set('all', '1');
-      if (allBox !== null) p.set('mailbox', allBox);
-      if (allDir) p.set('direction', allDir);
-    }
     return api.get<{ rows: Row[]; total: number }>(`/mail?${p}`).then((r) => { setRows(r.rows); setTotal(r.total); }).catch((e) => { setRows([]); setErr(errorText(e, i18n)); });
-  }, [folder, q, i18n, allMode, allBox, allDir]);
+  }, [folder, q, i18n, boxParams, status]);
   useEffect(() => { const h = setTimeout(() => void loadList(), q ? 250 : 0); return () => clearTimeout(h); }, [loadList, q]);
-  useEffect(() => { void loadCounts(); }, [loadCounts, id]);
-  useEffect(() => { api.get<MailStatus>('/mail/status').then(setStatus).catch(() => {}); }, []);
-  useEffect(() => {
-    if (allMode && !boxes) api.get<{ domain: string | null; mailboxes: Mailbox[] }>('/mail/supervisor/mailboxes').then(setBoxes).catch(() => {});
-  }, [allMode, boxes]);
+  useEffect(() => { if (status) void loadCounts(); }, [loadCounts, id, status]);
+  useEffect(() => { loadBoxes(); }, [loadBoxes, id]);
+  useEffect(() => { api.get<MailStatus>('/mail/status').then(setStatus).catch(() => setStatus(null)); }, []);
   // /mail?to=… (e.g. "Write email" on a contact) opens a new message.
   useEffect(() => {
     const to = params.get('to');
@@ -84,15 +91,20 @@ export function Mail() {
     setParams({}, { replace: true });
   }, [params, status]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const refresh = () => { void loadList(); void loadCounts(); if (allMode) setBoxes(null); };
+  const refresh = () => { void loadList(); void loadCounts(); loadBoxes(); };
   const fmtTime = (iso: string) => {
     const d = new Date(iso);
     const today = new Date().toDateString() === d.toDateString();
     return new Intl.DateTimeFormat(locale, today ? { hour: '2-digit', minute: '2-digit' } : { day: '2-digit', month: 'short' }).format(d);
   };
-  const compose = (patch: Partial<Draft> = {}) => setDraft({
-    from: status?.me.address || status?.senders[0] || '', to: '', cc: '', bcc: '', subject: '', text: '', files: [], showCc: false, ...patch,
-  });
+  // Default sender follows the open mailbox; a reply from an address the user may not send as falls back to it.
+  const senders = status?.senders ?? [];
+  const defaultFrom = (box === 'platform' && status?.me.platform && senders.includes(status.me.platform) ? status.me.platform
+    : box === 'business' ? senders.find((a) => a !== status?.me.address) : null) || status?.me.address || senders[0] || '';
+  const compose = (patch: Partial<Draft> = {}) => {
+    const { from, ...rest } = patch;
+    setDraft({ from: from && senders.includes(from.toLowerCase()) ? from : defaultFrom, to: '', cc: '', bcc: '', subject: '', text: '', files: [], showCc: false, ...rest });
+  };
 
   const canManage = !!status?.me.canManage;
   const setupMode = id === 'setup' && canManage;
@@ -106,12 +118,34 @@ export function Mail() {
         <button className="btn-primary mb-6 h-11 w-full" onClick={() => compose()} disabled={!configured} title={configured ? undefined : t('mail.need_setup')}>
           <Icon name="pencil" />{t('mail.compose')}
         </button>
+        {isOwner && box && (
+          <nav className="mb-4 flex flex-col gap-1 border-b border-line pb-4" aria-label={t('mail.boxes')}>
+            {BOXES.map((b) => {
+              const info = b.key === 'business' ? null : boxes?.[b.key];
+              const unread = boxes?.[b.key].unread ?? 0;
+              const active = box === b.key && !setupMode && !devicesMode;
+              return (
+                <button key={b.key} onClick={() => openBox(b.key)}
+                  className={`flex items-center gap-3 rounded-lg px-3 py-2 text-start text-sm font-medium transition-colors ${active ? 'bg-primary-soft text-primary-fg' : 'text-muted hover:bg-surface-2 hover:text-fg'}`}>
+                  <Icon name={b.icon} className="h-[18px] w-[18px] shrink-0" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block">{t(`mail.box_${b.key}` as MsgKey)}</span>
+                    <span className="block truncate text-[11px] font-normal opacity-80" dir={info?.address ? 'ltr' : undefined}>
+                      {b.key === 'business' ? t('mail.box_business_sub') : info?.address || t('mail.no_mailbox')}
+                    </span>
+                  </span>
+                  {unread > 0 && <span className="tabular rounded-full bg-primary px-2 text-[11px] font-semibold text-on-primary">{num(unread)}</span>}
+                </button>
+              );
+            })}
+          </nav>
+        )}
         <nav className="flex flex-col gap-1" aria-label={t('mail.folders')}>
           {FOLDERS.map((f) => {
             const c = f.key === 'STARRED' ? counts?.starred ?? 0 : f.key === 'INBOX' ? counts?.folders.INBOX?.unread ?? 0 : f.key === 'TRASH' || f.key === 'ARCHIVE' ? 0 : 0;
-            const active = folder === f.key && !setupMode && !devicesMode && !allMode;
+            const active = folder === f.key && !setupMode && !devicesMode;
             return (
-              <button key={f.key} onClick={() => { setFolder(f.key); if (id || allMode) nav('/mail'); }}
+              <button key={f.key} onClick={() => { setFolder(f.key); if (id) nav(`/mail${boxQs}`); }}
                 className={`flex h-10 items-center gap-3 rounded-lg px-3 text-sm font-medium transition-colors ${active ? 'bg-primary-soft text-primary-fg' : 'text-muted hover:bg-surface-2 hover:text-fg'}`}>
                 <Icon name={f.icon} className="h-[18px] w-[18px]" />
                 <span className="flex-1 text-start">{t(`mail.f_${f.key}` as MsgKey)}</span>
@@ -120,13 +154,6 @@ export function Mail() {
             );
           })}
         </nav>
-        {status?.me.supervisor && (
-          <div className="mt-4 border-t border-line pt-4">
-            <Link to="/mail?view=all" className={`flex h-10 items-center gap-3 rounded-lg px-3 text-sm font-medium ${allMode ? 'bg-primary-soft text-primary-fg' : 'text-muted hover:bg-surface-2 hover:text-fg'}`}>
-              <Icon name="eye" className="h-[18px] w-[18px]" /><span className="flex-1">{t('mail.all_domain')}</span>
-            </Link>
-          </div>
-        )}
         <div className="mt-auto border-t border-line pt-4">
           <Link to="/mail/devices" className={`mb-1 flex h-10 items-center gap-3 rounded-lg px-3 text-sm font-medium ${devicesMode ? 'bg-primary-soft text-primary-fg' : 'text-muted hover:bg-surface-2 hover:text-fg'}`}>
             <Icon name="phone" className="h-[18px] w-[18px]" /><span className="flex-1">{t('mail.devices')}</span>
@@ -135,7 +162,7 @@ export function Mail() {
             <Icon name="server" className="h-[18px] w-[18px]" /><span className="flex-1">{t('mail.server')}</span>
             {status && <span className={`h-2 w-2 rounded-full ${status.mx.ok && configured ? 'bg-success' : 'bg-warning'}`} aria-hidden="true" />}
           </Link>}
-          {status && (
+          {status && !isOwner && (
             <div className="mt-3 space-y-3 px-3 text-xs text-muted">
               {status.me.shared && status.senders.some((a) => a !== status.me.address) && (
                 <div className="space-y-1">
@@ -162,34 +189,36 @@ export function Mail() {
           <button className="btn-ghost btn-icon h-10 w-10" aria-label={t('mail.refresh')} onClick={refresh}><Icon name="refresh" /></button>
           <button className="btn-primary btn-icon h-10 w-10 lg:hidden" aria-label={t('mail.compose')} onClick={() => compose()} disabled={!configured}><Icon name="pencil" /></button>
         </div>
+        {isOwner && box && (
+          <div className="flex gap-1 border-b border-line px-3 py-2 lg:hidden" role="tablist" aria-label={t('mail.boxes')}>
+            {BOXES.map((b) => (
+              <button key={b.key} role="tab" aria-selected={box === b.key} onClick={() => openBox(b.key)}
+                className={`flex h-8 flex-1 items-center justify-center gap-1.5 rounded-lg text-xs font-semibold ${box === b.key ? 'bg-primary-soft text-primary-fg' : 'text-muted'}`}>
+                <Icon name={b.icon} className="h-3.5 w-3.5" />{t(`mail.box_${b.key}` as MsgKey)}
+                {(boxes?.[b.key].unread ?? 0) > 0 && <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="flex gap-1 overflow-x-auto border-b border-line px-3 py-2 lg:hidden">
           {FOLDERS.map((f) => (
-            <button key={f.key} onClick={() => { setFolder(f.key); if (id || allMode) nav('/mail'); }} className={`h-8 whitespace-nowrap rounded-full px-3 text-xs font-medium ${folder === f.key && !allMode ? 'bg-primary text-on-primary' : 'bg-surface-2 text-muted'}`}>{t(`mail.f_${f.key}` as MsgKey)}</button>
+            <button key={f.key} onClick={() => { setFolder(f.key); if (id) nav(`/mail${boxQs}`); }} className={`h-8 whitespace-nowrap rounded-full px-3 text-xs font-medium ${folder === f.key ? 'bg-primary text-on-primary' : 'bg-surface-2 text-muted'}`}>{t(`mail.f_${f.key}` as MsgKey)}</button>
           ))}
-          {status?.me.supervisor && <Link to="/mail?view=all" className={`flex h-8 items-center whitespace-nowrap rounded-full px-3 text-xs font-medium ${allMode ? 'bg-primary text-on-primary' : 'bg-surface-2 text-muted'}`}>{t('mail.all_domain')}</Link>}
           <Link to="/mail/devices" className="flex h-8 items-center whitespace-nowrap rounded-full bg-surface-2 px-3 text-xs font-medium text-muted">{t('mail.devices')}</Link>
           {canManage && <Link to="/mail/setup" className="flex h-8 items-center whitespace-nowrap rounded-full bg-surface-2 px-3 text-xs font-medium text-muted">{t('mail.server')}</Link>}
         </div>
-        {allMode && (
-          <div className="space-y-2 border-b border-line bg-surface-2 px-3 py-3">
-            <div className="flex items-start gap-2 text-xs text-muted"><Icon name="shield" className="mt-0.5 h-3.5 w-3.5 shrink-0" /><span>{t('mail.all_hint', { domain: boxes?.domain || '—' })}</span></div>
-            <div className="flex gap-2">
-              <select className="input h-9 min-w-0 flex-1 text-sm" aria-label={t('mail.all_mailbox')} value={allBox ?? '*'} onChange={(e) => setAllFilter({ box: e.target.value === '*' ? null : e.target.value })}>
-                <option value="*">{t('mail.all_mailboxes')}</option>
-                {(boxes?.mailboxes ?? []).map((b) => (
-                  <option key={b.mailbox} value={b.mailbox}>{b.mailbox || t('mail.no_mailbox_addr')}{b.user_name || b.user_email ? ` — ${b.user_name || b.user_email}` : ''} ({num(b.total)})</option>
-                ))}
-              </select>
-              <select className="input h-9 w-36 text-sm" aria-label={t('mail.all_direction')} value={allDir ?? ''} onChange={(e) => setAllFilter({ dir: e.target.value || null })}>
-                <option value="">{t('mail.dir_all')}</option>
-                <option value="IN">{t('mail.dir_in')}</option>
-                <option value="OUT">{t('mail.dir_out')}</option>
-              </select>
-            </div>
+        {box === 'business' && (
+          <div className="border-b border-line px-3 py-2">
+            <select className="input h-9 text-sm" aria-label={t('mail.box_address')} value={addr ?? '*'} onChange={(e) => openBox('business', e.target.value === '*' ? null : e.target.value)}>
+              <option value="*">{t('mail.all_addresses')}</option>
+              {(boxes?.addresses ?? []).map((b) => (
+                <option key={b.mailbox} value={b.mailbox}>{b.mailbox || t('mail.no_mailbox_addr')}{b.user_name || b.user_email ? ` — ${b.user_name || b.user_email}` : ''}</option>
+              ))}
+            </select>
           </div>
         )}
         <div className="flex items-center justify-between px-4 py-2 text-xs text-muted">
-          <span className="font-semibold uppercase tracking-wider">{allMode ? t('mail.all_domain') : t(`mail.f_${folder}` as MsgKey)}</span>
+          <span className="font-semibold uppercase tracking-wider">{box ? `${t(`mail.box_${box}` as MsgKey)} · ` : ''}{t(`mail.f_${folder}` as MsgKey)}</span>
           <span className="tabular">{num(total)}</span>
         </div>
         {err && <div className="px-3"><Alert tone="danger" onClose={() => setErr(null)}>{err}</Alert></div>}
@@ -203,7 +232,7 @@ export function Mail() {
                 const unread = !r.is_read && r.direction === 'IN';
                 return (
                   <li key={r.id}>
-                    <button onClick={() => nav(`/mail/${r.id}${allQs}`)}
+                    <button onClick={() => nav(`/mail/${r.id}${boxQs}`)}
                       className={`flex w-full gap-3 border-b border-line px-4 py-3 text-start transition-colors ${id === r.id ? 'bg-primary-soft/60' : 'hover:bg-surface-2'}`}>
                       <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${unread ? 'bg-primary' : 'bg-transparent'}`} aria-hidden="true" />
                       <span className="min-w-0 flex-1">
@@ -218,12 +247,8 @@ export function Mail() {
                           {!!r.is_starred && <Icon name="star" className="h-3.5 w-3.5 shrink-0 fill-warning text-warning" />}
                         </span>
                         <bdi className="mt-0.5 block truncate text-xs text-muted">{r.snippet}</bdi>
-                        {allMode && (
-                          <span className="mt-1 flex items-center gap-1.5 text-[11px] text-muted">
-                            <Icon name={r.direction === 'OUT' ? 'send' : 'inbox'} className="h-3 w-3 shrink-0" flip={r.direction === 'OUT'} />
-                            <span className="truncate" dir="ltr">{r.mailbox || t('mail.no_mailbox_addr')}</span>
-                            {r.folder !== 'INBOX' && r.folder !== 'SENT' && <span className="shrink-0 rounded bg-surface-2 px-1">{t(`mail.f_${r.folder}` as MsgKey)}</span>}
-                          </span>
+                        {box === 'business' && addr === null && (
+                          <span className="mt-1 block truncate text-[11px] text-muted" dir="ltr">{r.mailbox || t('mail.no_mailbox_addr')}</span>
                         )}
                       </span>
                     </button>
@@ -248,19 +273,19 @@ export function Mail() {
             <MailDevices />
           </div>
         ) : id ? (
-          <Reader key={`${id}${allMode}`} id={id} onChanged={refresh} fmtTime={fmtTime} supervisor={allMode} backTo={`/mail${allQs}`}
-            onCompose={(p) => compose(p)} onBack={() => nav(`/mail${allQs}`)} toast={toast} />
+          <Reader key={id} id={id} onChanged={refresh} fmtTime={fmtTime} linkQs={boxQs}
+            onCompose={(p) => compose(p)} onBack={() => nav(`/mail${boxQs}`)} toast={toast} />
         ) : (
           <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center text-muted">
             <span className="flex h-16 w-16 items-center justify-center rounded-full bg-surface text-line-strong shadow-sm"><Icon name="mail" className="h-8 w-8" /></span>
             <p className="text-sm">{t('mail.pick')}</p>
-            {allMode && boxes && boxes.mailboxes.length > 0 && (
+            {box === 'business' && addr === null && boxes && boxes.addresses.length > 0 && (
               <div className="mt-4 w-full max-w-xl text-start">
-                <div className="eyebrow mb-2">{t('mail.all_mailboxes')}</div>
+                <div className="eyebrow mb-2">{t('mail.all_addresses')}</div>
                 <ul className="card divide-y divide-line">
-                  {boxes.mailboxes.map((b) => (
+                  {boxes.addresses.map((b) => (
                     <li key={b.mailbox}>
-                      <button className="flex w-full items-center gap-3 px-4 py-3 text-start text-sm hover:bg-surface-2" onClick={() => setAllFilter({ box: b.mailbox })}>
+                      <button className="flex w-full items-center gap-3 px-4 py-3 text-start text-sm hover:bg-surface-2" onClick={() => openBox('business', b.mailbox)}>
                         <span className="min-w-0 flex-1">
                           <span className="block truncate font-medium text-fg" dir="ltr">{b.mailbox || t('mail.no_mailbox_addr')}</span>
                           <span className="block truncate text-xs">{b.user_name || b.user_email || t('mail.shared_addr')}</span>
@@ -283,14 +308,12 @@ export function Mail() {
   );
 }
 
-function Reader({ id, onChanged, onCompose, onBack, fmtTime, toast, supervisor = false, backTo = '/mail' }: {
+function Reader({ id, onChanged, onCompose, onBack, fmtTime, toast, linkQs = '' }: {
   id: string; onChanged: () => void; onCompose: (p: Partial<Draft>) => void; onBack: () => void; fmtTime: (iso: string) => string;
   toast: (m: string, tone?: 'success' | 'danger') => void;
-  /** OWNER supervisor view: load with ?all=1 and offer read-only actions only. */
-  supervisor?: boolean; backTo?: string;
+  /** Query string (the owner's open mailbox) kept on links to other messages. */
+  linkQs?: string;
 }) {
-  const sq = supervisor ? 'all=1' : '';
-  const threadQs = backTo.includes('?') ? backTo.slice(backTo.indexOf('?')) : '';
   const i18n = useI18n();
   const { t, locale } = i18n;
   const nav = useNavigate();
@@ -299,7 +322,7 @@ function Reader({ id, onChanged, onCompose, onBack, fmtTime, toast, supervisor =
   const [busy, setBusy] = useState<string | null>(null);
   const frame = useRef<HTMLIFrameElement>(null);
   const [h, setH] = useState(400);
-  useEffect(() => { api.get<Detail>(`/mail/${id}${sq ? `?${sq}` : ''}`).then((d) => { setM(d); onChanged(); }).catch(() => setM(null)); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { api.get<Detail>(`/mail/${id}`).then((d) => { setM(d); onChanged(); }).catch(() => setM(null)); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (m === undefined) return <Loading />;
   if (m === null) return <EmptyState icon="mail" title={t('mail.not_found')} />;
@@ -314,16 +337,11 @@ function Reader({ id, onChanged, onCompose, onBack, fmtTime, toast, supervisor =
   const replyFrom = m.direction === 'IN' ? m.mailbox ?? undefined : m.from_email ?? undefined;
   const relatedTo = m.related_type === 'received_invoice' ? `/inbox/${m.related_id}` : m.related_type === 'invoice' ? `/invoices/${m.related_id}` : m.related_type === 'contract' ? `/contracts/${m.related_id}` : null;
 
-  const readOnly = supervisor && !!m.supervised;
   return (
     <div className="mx-auto max-w-4xl p-4 sm:p-8">
-      {readOnly && <div className="mb-4"><Alert tone="info">{t('mail.supervised_notice', { mailbox: m.mailbox || '—' })}</Alert></div>}
+      {m.other_user && <div className="mb-4"><Alert tone="info">{t('mail.other_user_notice', { mailbox: m.mailbox || '—' })}</Alert></div>}
       <div className="mb-4 flex flex-wrap items-center gap-1">
         <button className="btn-ghost btn-icon h-9 w-9 md:hidden" aria-label={t('mail.back')} onClick={onBack}><Icon name="arrowLeft" flip /></button>
-        {readOnly ? <>
-          <span className="ms-auto" />
-          {m.raw_r2_key && <a className="btn-ghost btn-icon h-9 w-9" href={`/api/mail/${m.id}/raw?${sq}`} aria-label={t('mail.download_eml')} title={t('mail.download_eml')}><Icon name="download" /></a>}
-        </> : <>
         {m.direction === 'IN' && <>
           <button className="btn-secondary btn-sm" onClick={() => onCompose({ to: m.from_email ?? '', subject: re(m.subject), text: quote(), reply_to_id: m.id, ...(replyFrom ? { from: replyFrom } : {}) })}><Icon name="reply" flip />{t('mail.reply')}</button>
           <button className="btn-ghost btn-sm" onClick={() => onCompose({ to: m.from_email ?? '', cc: [m.to_email, m.cc_email].filter(Boolean).join(', ').split(',').map((x) => x.trim()).filter((x) => x && !x.includes(m.mailbox ?? '\u0000')).join(', '), showCc: true, subject: re(m.subject), text: quote(), reply_to_id: m.id, ...(replyFrom ? { from: replyFrom } : {}) })}><Icon name="replyAll" flip />{t('mail.reply_all')}</button>
@@ -338,8 +356,7 @@ function Reader({ id, onChanged, onCompose, onBack, fmtTime, toast, supervisor =
         {(m.folder === 'ARCHIVE' || m.folder === 'TRASH') && <button className="btn-ghost btn-sm" onClick={() => void act('restore', () => api.patch(`/mail/${m.id}`, { folder: m.direction === 'IN' ? 'INBOX' : 'SENT' }), onBack)}>{t('mail.restore')}</button>}
         <button className="btn-ghost btn-icon h-9 w-9 hover:text-danger" aria-label={m.folder === 'TRASH' ? t('mail.delete_forever') : t('mail.delete')} title={m.folder === 'TRASH' ? t('mail.delete_forever') : t('mail.delete')}
           onClick={() => void act('del', () => api.del(`/mail/${m.id}`), onBack)}>{busy === 'del' ? <Spinner /> : <Icon name="trash" />}</button>
-        {m.raw_r2_key && <a className="btn-ghost btn-icon h-9 w-9" href={`/api/mail/${m.id}/raw${sq ? `?${sq}` : ''}`} aria-label={t('mail.download_eml')} title={t('mail.download_eml')}><Icon name="download" /></a>}
-        </>}
+        {m.raw_r2_key && <a className="btn-ghost btn-icon h-9 w-9" href={`/api/mail/${m.id}/raw`} aria-label={t('mail.download_eml')} title={t('mail.download_eml')}><Icon name="download" /></a>}
       </div>
 
       <article className="card overflow-hidden">
@@ -353,7 +370,7 @@ function Reader({ id, onChanged, onCompose, onBack, fmtTime, toast, supervisor =
                 {m.from_name && <span className="text-xs text-muted" dir="ltr">&lt;{m.from_email}&gt;</span>}
               </div>
               <div className="truncate text-xs text-muted">{t('mail.to')}: <span dir="ltr">{m.to_email}</span>{m.cc_email && <> · Cc: <span dir="ltr">{m.cc_email}</span></>}</div>
-              {supervisor && <div className="truncate text-xs text-muted">{t('mail.all_mailbox')}: <span dir="ltr">{m.mailbox || t('mail.no_mailbox_addr')}</span>{m.sent_by && <> · {t('mail.sent_by')}: <span dir="ltr">{m.sent_by}</span></>}</div>}
+              {m.box && <div className="truncate text-xs text-muted">{t('mail.all_mailbox')}: <span dir="ltr">{m.mailbox || t('mail.no_mailbox_addr')}</span>{m.sent_by && <> · {t('mail.sent_by')}: <span dir="ltr">{m.sent_by}</span></>}</div>}
             </div>
             <time className="shrink-0 text-xs text-muted" dateTime={m.created_at}>{full(m.created_at)}</time>
           </div>
@@ -373,7 +390,7 @@ function Reader({ id, onChanged, onCompose, onBack, fmtTime, toast, supervisor =
                 <button className="font-semibold text-primary-fg hover:underline" onClick={() => setImages(true)}>{t('mail.show_images')}</button>
               </div>
             )}
-            <iframe ref={frame} title={m.subject ?? 'mail'} src={`/api/mail/${m.id}/html?${[images ? 'images=1' : '', sq].filter(Boolean).join('&')}`}
+            <iframe ref={frame} title={m.subject ?? 'mail'} src={`/api/mail/${m.id}/html${images ? '?images=1' : ''}`}
               sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" className="w-full border-0 bg-white" style={{ height: h }}
               onLoad={() => { try { const b = frame.current?.contentDocument?.documentElement; if (b) setH(Math.min(4000, Math.max(200, b.scrollHeight + 16))); } catch { /* cross-origin */ } }} />
           </div>
@@ -393,7 +410,7 @@ function Reader({ id, onChanged, onCompose, onBack, fmtTime, toast, supervisor =
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-sm font-medium" dir="auto">{a.filename}</div>
                       <div className="text-xs text-muted">{fmtSize(a.size_bytes, locale)}</div>
-                      {einv && !readOnly && m.related_type !== 'received_invoice' && (
+                      {einv && m.related_type !== 'received_invoice' && (
                         <button className="mt-1 text-xs font-semibold text-primary-fg hover:underline" disabled={!!busy}
                           onClick={() => void act(`imp-${a.id}`, () => api.post<{ receivedInvoiceId: string | null }>(`/mail/${m.id}/attachments/${a.id}/import`).then((r) => {
                             toast(t('mail.imported'));
@@ -403,7 +420,7 @@ function Reader({ id, onChanged, onCompose, onBack, fmtTime, toast, supervisor =
                         </button>
                       )}
                     </div>
-                    <a className="btn-ghost btn-icon h-9 w-9" href={`/api/mail/${m.id}/attachments/${a.id}?download=1${sq ? `&${sq}` : ''}`} aria-label={`${t('mail.download')} ${a.filename}`}><Icon name="download" /></a>
+                    <a className="btn-ghost btn-icon h-9 w-9" href={`/api/mail/${m.id}/attachments/${a.id}?download=1`} aria-label={`${t('mail.download')} ${a.filename}`}><Icon name="download" /></a>
                   </li>
                 );
               })}
@@ -418,7 +435,7 @@ function Reader({ id, onChanged, onCompose, onBack, fmtTime, toast, supervisor =
           <ul className="space-y-2">
             {m.thread.map((x) => (
               <li key={x.id}>
-                <Link to={`/mail/${x.id}${threadQs}`} className="card flex items-center gap-3 p-3 hover:border-line-strong">
+                <Link to={`/mail/${x.id}${linkQs}`} className="card flex items-center gap-3 p-3 hover:border-line-strong">
                   <Icon name={x.direction === 'OUT' ? 'send' : 'inbox'} className="h-4 w-4 shrink-0 text-muted" flip={x.direction === 'OUT'} />
                   <bdi className="w-40 shrink-0 truncate text-sm font-medium">{x.from_name || x.from_email}</bdi>
                   <bdi className="min-w-0 flex-1 truncate text-xs text-muted">{x.snippet}</bdi>

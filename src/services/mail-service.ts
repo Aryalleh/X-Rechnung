@@ -18,41 +18,74 @@ import { audit } from './audit-service';
 import type { Actor } from '../http-types';
 
 /**
- * Who sees which mail: every user sees their own address; OWNER/ADMIN also see the
- * shared mailboxes (any address not assigned to a user, e.g. info@ or the catch-all).
- * `all` is the OWNER-only supervisor view: every message of the domain, including
- * other users' personal mailboxes and every system-sent message.
+ * Who sees which mail:
+ * - every user sees their own address;
+ * - ADMIN also sees the shared mailboxes (addresses not assigned to a user, e.g. info@ or the catch-all);
+ * - the OWNER sees all business mail on the domain, split into three mailboxes (`box`):
+ *   `personal` (the owner's own address), `platform` (the app's sending address, see
+ *   EMAIL_OUTBOUND.from_email: invoices, contracts, password links) and `business`
+ *   (every other address, assigned to a user or not).
+ *
+ * `all` grants access to any message; `filter` narrows a listing to one mailbox set.
+ * Without options the OWNER keeps the classic own+shared scope (used by phone sync).
  */
-export interface MailScope { own: string | null; shared: boolean; assigned: string[]; all?: boolean }
+export type MailBox = 'personal' | 'platform' | 'business';
+export const MAIL_BOXES: readonly MailBox[] = ['personal', 'platform', 'business'];
+export interface MailScope {
+  own: string | null; shared: boolean; assigned: string[];
+  all?: boolean;
+  filter?: { in?: string[]; notIn?: string[] };
+}
 
-export async function scopeFor(db: D1Database, actor: Actor, opts: { all?: boolean } = {}): Promise<MailScope> {
+export async function scopeFor(db: D1Database, actor: Actor, opts: { owner?: boolean; box?: MailBox } = {}): Promise<MailScope> {
   const rows = await all<{ a: string }>(db, `SELECT lower(mail_address) a FROM admin_users WHERE mail_address IS NOT NULL AND mail_address != ''`);
-  if (opts.all && actor.role !== 'OWNER') throw new AppError('FORBIDDEN');
-  return {
-    own: actor.mailAddress?.toLowerCase() || null, shared: actor.role === 'OWNER' || actor.role === 'ADMIN', assigned: rows.map((r) => r.a),
-    ...(opts.all ? { all: true } : {}),
-  };
+  const own = actor.mailAddress?.toLowerCase() || null;
+  const base: MailScope = { own, shared: actor.role === 'OWNER' || actor.role === 'ADMIN', assigned: rows.map((r) => r.a) };
+  const isOwner = actor.role === 'OWNER';
+  if (opts.box && !isOwner) throw new AppError('FORBIDDEN');
+  if (!isOwner || (!opts.owner && !opts.box)) return base;
+  if (!opts.box) return { ...base, all: true };
+  const platform = (await mailSettings(db)).fromEmail || null;
+  const filter = boxFilter(opts.box, own, platform);
+  return { ...base, all: true, filter };
+}
+
+/** Which mailbox addresses belong to one of the owner's three mailboxes. */
+export function boxFilter(box: MailBox, own: string | null, platform: string | null): NonNullable<MailScope['filter']> {
+  if (box === 'personal') return { in: own ? [own] : [] };
+  if (box === 'platform') return { in: platform && platform !== own ? [platform] : [] };
+  return { notIn: [own, platform].filter((x): x is string => !!x) };
 }
 
 export function canSee(scope: MailScope, mailbox: string | null): boolean {
-  if (scope.all) return true;
   const mb = (mailbox ?? '').toLowerCase();
+  if (scope.filter?.in && !scope.filter.in.includes(mb)) return false;
+  if (scope.filter?.notIn && scope.filter.notIn.includes(mb)) return false;
+  if (scope.all) return true;
   if (scope.own && mb === scope.own) return true;
   return scope.shared && !scope.assigned.includes(mb);
 }
 
 /** SQL condition (appends its params) restricting mail_messages to the scope. */
 export function scopeSql(scope: MailScope, params: unknown[]): string {
-  if (scope.all) return '1=1';
+  const col = `lower(coalesce(mailbox,''))`;
+  const list = (xs: string[]) => xs.map((a) => { params.push(a); return `?${params.length}`; }).join(',');
+  const extra: string[] = [];
+  if (scope.filter?.in) extra.push(scope.filter.in.length ? `${col} IN (${list(scope.filter.in)})` : '0=1');
+  if (scope.filter?.notIn?.length) extra.push(`${col} NOT IN (${list(scope.filter.notIn)})`);
+  if (scope.all) return extra.length ? `(${extra.join(' AND ')})` : '1=1';
   const parts: string[] = [];
-  if (scope.own) { params.push(scope.own); parts.push(`lower(coalesce(mailbox,'')) = ?${params.length}`); }
-  if (scope.shared) {
-    if (scope.assigned.length) {
-      const ph = scope.assigned.map((a) => { params.push(a); return `?${params.length}`; });
-      parts.push(`lower(coalesce(mailbox,'')) NOT IN (${ph.join(',')})`);
-    } else parts.push('1=1');
-  }
+  if (scope.own) { params.push(scope.own); parts.push(`${col} = ?${params.length}`); }
+  if (scope.shared) parts.push(scope.assigned.length ? `${col} NOT IN (${list(scope.assigned)})` : '1=1');
   return parts.length ? `(${parts.join(' OR ')})` : '0=1';
+}
+
+/** Mailbox an OWNER message belongs to (for links and labels). */
+export function boxOf(mailbox: string | null, own: string | null, platform: string | null): MailBox {
+  const mb = (mailbox ?? '').toLowerCase();
+  if (own && mb === own) return 'personal';
+  if (platform && mb === platform) return 'platform';
+  return 'business';
 }
 
 export const FOLDERS = ['INBOX', 'SENT', 'ARCHIVE', 'TRASH'] as const;
@@ -233,14 +266,13 @@ const LIST_COLS = `id, folder, direction, mailbox, thread_id, from_email, from_n
   is_read, is_starred, status, related_type, related_id, created_at`;
 
 export async function listMail(db: D1Database, scope: MailScope, f: {
-  folder: Folder | 'STARRED' | 'ALL'; q?: string; limit: number; offset: number; mailbox?: string; direction?: 'IN' | 'OUT';
+  folder: Folder | 'STARRED'; q?: string; limit: number; offset: number; mailbox?: string;
 }) {
   const params: unknown[] = [];
   const where: string[] = [scopeSql(scope, params)];
   if (f.folder === 'STARRED') where.push(`is_starred = 1 AND folder != 'TRASH'`);
-  else if (f.folder !== 'ALL') { params.push(f.folder); where.push(`folder = ?${params.length}`); }
+  else { params.push(f.folder); where.push(`folder = ?${params.length}`); }
   if (f.mailbox !== undefined) { params.push(f.mailbox.toLowerCase()); where.push(`lower(coalesce(mailbox,'')) = ?${params.length}`); }
-  if (f.direction) { params.push(f.direction); where.push(`direction = ?${params.length}`); }
   if (f.q) {
     params.push(`%${f.q.toLowerCase()}%`);
     const p = `?${params.length}`;
@@ -256,8 +288,8 @@ export async function listMail(db: D1Database, scope: MailScope, f: {
 }
 
 /**
- * Supervisor overview (OWNER): every mailbox address that has mail, with totals and
- * the user it belongs to (null = shared / app / catch-all address).
+ * Owner overview: every mailbox address that has mail, with totals and the user it
+ * belongs to (null = shared / catch-all address).
  */
 export async function mailboxOverview(db: D1Database) {
   return all<{ mailbox: string; total: number; received: number; sent: number; failed: number; last_at: string | null; user_email: string | null; user_name: string | null }>(db,
@@ -267,6 +299,16 @@ export async function mailboxOverview(db: D1Database) {
        FROM mail_messages GROUP BY lower(coalesce(mailbox,''))) m
      LEFT JOIN admin_users u ON lower(u.mail_address) = m.mailbox
      ORDER BY m.last_at DESC`);
+}
+
+/** Unread INBOX counts of the owner's three mailboxes, plus their addresses. */
+export async function ownerBoxes(db: D1Database, own: string | null) {
+  const platform = (await mailSettings(db)).fromEmail || null;
+  const rows = await all<{ mb: string; unread: number }>(db,
+    `SELECT lower(coalesce(mailbox,'')) mb, count(*) unread FROM mail_messages WHERE folder='INBOX' AND is_read=0 GROUP BY 1`);
+  const unread = { personal: 0, platform: 0, business: 0 };
+  for (const r of rows) unread[boxOf(r.mb, own, platform)] += r.unread;
+  return { personal: { address: own, unread: unread.personal }, platform: { address: platform, unread: unread.platform }, business: { unread: unread.business } };
 }
 
 export async function mailCounts(db: D1Database, scope: MailScope) {
