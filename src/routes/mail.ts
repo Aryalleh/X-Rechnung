@@ -10,30 +10,47 @@ import { requireRole } from '../middleware/access';
 import { rateLimit } from '../middleware/rate-limit';
 import { ingestFile } from '../services/einvoice/ingest';
 import {
-  FOLDERS, attachmentsOf, canSee, getMail, listMail, mailCounts, mailSettings, mailStatus, purgeMail, scopeFor, sendMail, senderAddresses,
+  FOLDERS, attachmentsOf, canSee, getMail, listMail, mailboxOverview, mailCounts, mailSettings, mailStatus, purgeMail, scopeFor, sendMail, senderAddresses,
 } from '../services/mail-service';
 import type { Context } from 'hono';
 
+/** The caller's normal mailbox scope (used for every change: flags, moves, delete, send, import). */
 const scope = (c: Context<HonoEnv>) => scopeFor(c.env.DB, c.get('actor')!);
+/**
+ * Read-only scope: with `?all=1` the OWNER gets the supervisor view of every message
+ * on the domain (other users' personal mailboxes and all system mail included).
+ * Anyone else asking for it gets 403.
+ */
+const readScope = (c: Context<HonoEnv>) => scopeFor(c.env.DB, c.get('actor')!, { all: c.req.query('all') === '1' });
 const MAIL_ROLES = ['OWNER', 'ADMIN', 'ACCOUNTANT', 'MAIL_USER'] as const;
 
 export const mailRoutes = new Hono<HonoEnv>();
 
 mailRoutes.get('/', async (c) => {
   const folder = (c.req.query('folder') ?? 'INBOX').toUpperCase();
-  if (folder !== 'STARRED' && !FOLDERS.includes(folder as never)) throw new AppError('VALIDATION_ERROR', 'unknown folder');
+  if (folder !== 'STARRED' && folder !== 'ALL' && !FOLDERS.includes(folder as never)) throw new AppError('VALIDATION_ERROR', 'unknown folder');
   const limit = Math.min(100, Math.max(1, Number(c.req.query('limit') ?? 50) || 50));
   const offset = Math.max(0, Number(c.req.query('offset') ?? 0) || 0);
-  return ok(c, await listMail(c.env.DB, await scope(c), { folder: folder as never, q: c.req.query('q')?.trim() || undefined, limit, offset }));
+  const dir = c.req.query('direction')?.toUpperCase();
+  return ok(c, await listMail(c.env.DB, await readScope(c), {
+    folder: folder as never, q: c.req.query('q')?.trim() || undefined, limit, offset,
+    mailbox: c.req.query('mailbox'), direction: dir === 'IN' || dir === 'OUT' ? dir : undefined,
+  }));
 });
 
-mailRoutes.get('/counts', async (c) => ok(c, await mailCounts(c.env.DB, await scope(c))));
+mailRoutes.get('/counts', async (c) => ok(c, await mailCounts(c.env.DB, await readScope(c))));
+
+/** OWNER supervisor view: every mailbox address on the domain that has mail, with totals. */
+mailRoutes.get('/supervisor/mailboxes', requireRole('OWNER'), async (c) => {
+  const [boxes, s] = await Promise.all([mailboxOverview(c.env.DB), mailSettings(c.env.DB)]);
+  return ok(c, { domain: s.domain || null, mailboxes: boxes });
+});
 
 mailRoutes.get('/status', async (c) => {
   const [status, s, sc] = await Promise.all([mailStatus(c.env), mailSettings(c.env.DB), scope(c)]);
   const role = c.get('actor')!.role;
   const canManage = role === 'OWNER' || role === 'ADMIN';
-  return ok(c, { ...status, senders: senderAddresses(s, sc), settings: canManage ? s : null, me: { address: sc.own, canManage, shared: sc.shared } });
+  return ok(c, { ...status, senders: senderAddresses(s, sc), settings: canManage ? s : null, me: { address: sc.own, canManage, shared: sc.shared, supervisor: role === 'OWNER' } });
 });
 
 // ------------------------------------------------------------ phones (ActiveSync)
@@ -61,27 +78,36 @@ mailRoutes.delete('/devices/:id', async (c) => {
 });
 
 mailRoutes.get('/:id', async (c) => {
-  const m = await getMail(c.env.DB, c.req.param('id'), await scope(c));
+  const sc = await readScope(c);
+  const m = await getMail(c.env.DB, c.req.param('id'), sc);
+  const actor = c.get('actor')!;
+  // Supervisor access to a mailbox outside the owner's normal scope: leave the user's
+  // read state alone and keep an audit trail of who opened what.
+  const supervised = !!sc.all && !canSee({ ...sc, all: false }, m.mailbox);
+  if (supervised) {
+    await audit(c.env.DB, { entityType: 'mail', entityId: m.id, eventType: 'MAIL_SUPERVISOR_VIEW', actorEmail: actor.email, metadata: { mailbox: m.mailbox } });
+  }
   const [attachments, thread] = await Promise.all([
     attachmentsOf(c.env.DB, m.id),
     c.env.DB.prepare(`SELECT id, mailbox, direction, from_email, from_name, subject, snippet, created_at, status FROM mail_messages
       WHERE thread_id=?1 AND id != ?2 AND folder != 'TRASH' ORDER BY created_at`).bind(m.thread_id, m.id).all<{ mailbox: string | null }>(),
   ]);
-  const sc = await scope(c);
   thread.results = thread.results.filter((x) => canSee(sc, x.mailbox));
-  if (!m.is_read && c.get('actor')?.role !== 'READ_ONLY') await run(c.env.DB, `UPDATE mail_messages SET is_read=1 WHERE id=?1`, m.id);
+  const markRead = !m.is_read && actor.role !== 'READ_ONLY' && !supervised;
+  if (markRead) await run(c.env.DB, `UPDATE mail_messages SET is_read=1 WHERE id=?1`, m.id);
   const { html_body, ...rest } = m;
-  return ok(c, { ...rest, is_read: 1, has_html: !!html_body, attachments, thread: thread.results });
+  return ok(c, { ...rest, is_read: markRead ? 1 : m.is_read, has_html: !!html_body, attachments, thread: thread.results, supervised });
 });
 
 /** The HTML body, served under a sandbox CSP (no scripts, no forms; remote images only on request). */
 mailRoutes.get('/:id/html', async (c) => {
-  const m = await getMail(c.env.DB, c.req.param('id'), await scope(c));
+  const sc = await readScope(c);
+  const m = await getMail(c.env.DB, c.req.param('id'), sc);
   const remote = c.req.query('images') === '1';
   let html = m.html_body ?? '';
   // Inline images (cid:) → this mailbox's attachment URLs.
   const atts = await attachmentsOf(c.env.DB, m.id);
-  for (const a of atts) if (a.content_id) html = html.split(`cid:${a.content_id}`).join(`/api/mail/${m.id}/attachments/${a.id}`);
+  for (const a of atts) if (a.content_id) html = html.split(`cid:${a.content_id}`).join(`/api/mail/${m.id}/attachments/${a.id}${sc.all ? '?all=1' : ''}`);
   const doc = `<!doctype html><html><head><meta charset="utf-8"><base target="_blank">
 <style>body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:14px;line-height:1.5;color:#1f2937;margin:16px;word-wrap:break-word}img{max-width:100%;height:auto}</style>
 </head><body>${html}</body></html>`;
@@ -98,7 +124,7 @@ mailRoutes.get('/:id/html', async (c) => {
 });
 
 mailRoutes.get('/:id/attachments/:att', async (c) => {
-  const m = await getMail(c.env.DB, c.req.param('id'), await scope(c));
+  const m = await getMail(c.env.DB, c.req.param('id'), await readScope(c));
   const att = (await attachmentsOf(c.env.DB, m.id)).find((a) => a.id === c.req.param('att'));
   if (!att) throw new AppError('NOT_FOUND');
   const obj = await c.env.ARCHIVE_BUCKET.get(att.r2_key);
@@ -115,7 +141,7 @@ mailRoutes.get('/:id/attachments/:att', async (c) => {
 });
 
 mailRoutes.get('/:id/raw', async (c) => {
-  const m = await getMail(c.env.DB, c.req.param('id'), await scope(c));
+  const m = await getMail(c.env.DB, c.req.param('id'), await readScope(c));
   if (!m.raw_r2_key) throw new AppError('NOT_FOUND');
   const obj = await c.env.ARCHIVE_BUCKET.get(m.raw_r2_key);
   if (!obj) throw new AppError('NOT_FOUND');

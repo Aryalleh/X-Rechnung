@@ -20,15 +20,22 @@ import type { Actor } from '../http-types';
 /**
  * Who sees which mail: every user sees their own address; OWNER/ADMIN also see the
  * shared mailboxes (any address not assigned to a user, e.g. info@ or the catch-all).
+ * `all` is the OWNER-only supervisor view: every message of the domain, including
+ * other users' personal mailboxes and every system-sent message.
  */
-export interface MailScope { own: string | null; shared: boolean; assigned: string[] }
+export interface MailScope { own: string | null; shared: boolean; assigned: string[]; all?: boolean }
 
-export async function scopeFor(db: D1Database, actor: Actor): Promise<MailScope> {
+export async function scopeFor(db: D1Database, actor: Actor, opts: { all?: boolean } = {}): Promise<MailScope> {
   const rows = await all<{ a: string }>(db, `SELECT lower(mail_address) a FROM admin_users WHERE mail_address IS NOT NULL AND mail_address != ''`);
-  return { own: actor.mailAddress?.toLowerCase() || null, shared: actor.role === 'OWNER' || actor.role === 'ADMIN', assigned: rows.map((r) => r.a) };
+  if (opts.all && actor.role !== 'OWNER') throw new AppError('FORBIDDEN');
+  return {
+    own: actor.mailAddress?.toLowerCase() || null, shared: actor.role === 'OWNER' || actor.role === 'ADMIN', assigned: rows.map((r) => r.a),
+    ...(opts.all ? { all: true } : {}),
+  };
 }
 
 export function canSee(scope: MailScope, mailbox: string | null): boolean {
+  if (scope.all) return true;
   const mb = (mailbox ?? '').toLowerCase();
   if (scope.own && mb === scope.own) return true;
   return scope.shared && !scope.assigned.includes(mb);
@@ -36,6 +43,7 @@ export function canSee(scope: MailScope, mailbox: string | null): boolean {
 
 /** SQL condition (appends its params) restricting mail_messages to the scope. */
 export function scopeSql(scope: MailScope, params: unknown[]): string {
+  if (scope.all) return '1=1';
   const parts: string[] = [];
   if (scope.own) { params.push(scope.own); parts.push(`lower(coalesce(mailbox,'')) = ?${params.length}`); }
   if (scope.shared) {
@@ -224,11 +232,15 @@ export async function attachmentsOf(db: D1Database, mailId: string): Promise<Att
 const LIST_COLS = `id, folder, direction, mailbox, thread_id, from_email, from_name, to_email, subject, snippet, has_attachments,
   is_read, is_starred, status, related_type, related_id, created_at`;
 
-export async function listMail(db: D1Database, scope: MailScope, f: { folder: Folder | 'STARRED'; q?: string; limit: number; offset: number }) {
+export async function listMail(db: D1Database, scope: MailScope, f: {
+  folder: Folder | 'STARRED' | 'ALL'; q?: string; limit: number; offset: number; mailbox?: string; direction?: 'IN' | 'OUT';
+}) {
   const params: unknown[] = [];
   const where: string[] = [scopeSql(scope, params)];
   if (f.folder === 'STARRED') where.push(`is_starred = 1 AND folder != 'TRASH'`);
-  else { params.push(f.folder); where.push(`folder = ?${params.length}`); }
+  else if (f.folder !== 'ALL') { params.push(f.folder); where.push(`folder = ?${params.length}`); }
+  if (f.mailbox !== undefined) { params.push(f.mailbox.toLowerCase()); where.push(`lower(coalesce(mailbox,'')) = ?${params.length}`); }
+  if (f.direction) { params.push(f.direction); where.push(`direction = ?${params.length}`); }
   if (f.q) {
     params.push(`%${f.q.toLowerCase()}%`);
     const p = `?${params.length}`;
@@ -241,6 +253,20 @@ export async function listMail(db: D1Database, scope: MailScope, f: { folder: Fo
     one<{ n: number }>(db, `SELECT count(*) n ${sql}`, ...params),
   ]);
   return { rows, total: total?.n ?? 0 };
+}
+
+/**
+ * Supervisor overview (OWNER): every mailbox address that has mail, with totals and
+ * the user it belongs to (null = shared / app / catch-all address).
+ */
+export async function mailboxOverview(db: D1Database) {
+  return all<{ mailbox: string; total: number; received: number; sent: number; failed: number; last_at: string | null; user_email: string | null; user_name: string | null }>(db,
+    `SELECT m.mailbox, m.total, m.received, m.sent, m.failed, m.last_at, u.email user_email, u.full_name user_name FROM (
+       SELECT lower(coalesce(mailbox,'')) mailbox, count(*) total, sum(CASE WHEN direction='IN' THEN 1 ELSE 0 END) received,
+              sum(CASE WHEN direction='OUT' THEN 1 ELSE 0 END) sent, sum(CASE WHEN status='FAILED' THEN 1 ELSE 0 END) failed, max(created_at) last_at
+       FROM mail_messages GROUP BY lower(coalesce(mailbox,''))) m
+     LEFT JOIN admin_users u ON lower(u.mail_address) = m.mailbox
+     ORDER BY m.last_at DESC`);
 }
 
 export async function mailCounts(db: D1Database, scope: MailScope) {
